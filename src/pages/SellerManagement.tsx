@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Search, Filter, Eye, CheckCircle, XCircle, Ban } from 'lucide-react';
+import { Search, Eye, CheckCircle, XCircle, Ban } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockSellers } from '../data/mockData';
 import type { Seller, SellerStatus } from '../types';
 
@@ -31,6 +34,7 @@ export default function SellerManagement() {
   const [rejectReason, setRejectReason] = useState('');
   const [customReason, setCustomReason] = useState('');
   const [suspendReason, setSuspendReason] = useState('');
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const filtered = sellers.filter(s => {
     const matchSearch = s.storeName.includes(search) || s.businessNumber.includes(search) || s.ownerName.includes(search);
@@ -40,6 +44,40 @@ export default function SellerManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleExcelDownload = () => {
+    const filters = [
+      search && `검색: ${search}`,
+      statusFilter !== '전체' && `상태: ${statusFilter}`,
+      regionFilter !== '전체' && `지역: ${regionFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'sellers',
+      menu: '판매자 관리',
+      filters,
+      sheets: [{
+        name: '판매자 목록',
+        data: filtered.map(s => ({
+          '매장명': s.storeName,
+          '대표자명': s.ownerName,
+          '사업자번호': s.businessNumber,
+          '지역': s.region,
+          '상태': s.status,
+          '가입일': s.joinDate,
+          '연락처': s.phone,
+          '이메일': s.email,
+          '주소': s.address,
+          '누적주문수': s.totalOrders,
+          '신고수': s.reportCount,
+          '주요카테고리': s.categoryMain,
+          '은행': s.bankName,
+          '계좌번호': s.accountNumber,
+          '예금주': s.accountHolder,
+        })),
+      }],
+    });
+  };
 
   const updateStatus = (id: string, status: SellerStatus, memo?: string) => {
     setSellers(prev => prev.map(s => s.id === id ? { ...s, status, memo: memo ?? s.memo } : s));
@@ -83,6 +121,7 @@ export default function SellerManagement() {
           <select className="input w-40" value={regionFilter} onChange={e => { setRegionFilter(e.target.value); setPage(1); }}>
             {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -239,6 +278,8 @@ export default function SellerManagement() {
           </div>
         </div>
       </Modal>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

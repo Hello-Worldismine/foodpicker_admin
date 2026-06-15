@@ -3,6 +3,9 @@ import { Search, Star } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockReviews } from '../data/mockData';
 import type { Review, ReviewStatus } from '../types';
 
@@ -26,6 +29,7 @@ export default function ReviewManagement() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Review | null>(null);
   const [memo, setMemo] = useState('');
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const filtered = reviews.filter(r => {
     const matchSearch = r.productName.includes(search) || r.storeName.includes(search) || r.buyerName.includes(search);
@@ -34,6 +38,34 @@ export default function ReviewManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleExcelDownload = () => {
+    const filters = [
+      search && `검색: ${search}`,
+      statusFilter !== '전체' && `상태: ${statusFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'reviews',
+      menu: '리뷰 관리',
+      filters,
+      sheets: [{
+        name: '리뷰 목록',
+        data: filtered.map(r => ({
+          '리뷰번호': r.reviewNumber,
+          '상품명': r.productName,
+          '매장명': r.storeName,
+          '구매자': r.buyerName,
+          '별점': r.rating,
+          '리뷰태그': r.tags.join(', '),
+          '리뷰내용': r.content,
+          '작성일': r.writtenAt,
+          '신고수': r.reportCount,
+          '상태': r.status,
+        })),
+      }],
+    });
+  };
 
   const updateStatus = (id: string, status: ReviewStatus) => {
     setReviews(prev => prev.map(r => r.id === id ? { ...r, status } : r));
@@ -52,6 +84,7 @@ export default function ReviewManagement() {
             <option value="전체">전체 상태</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -150,6 +183,8 @@ export default function ReviewManagement() {
           </div>
         )}
       </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

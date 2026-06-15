@@ -4,6 +4,9 @@ import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockReports } from '../data/mockData';
 import type { Report, ReportStatus } from '../types';
 
@@ -30,6 +33,7 @@ export default function ReportManagement() {
   const [selected, setSelected] = useState<Report | null>(null);
   const [replyText, setReplyText] = useState('');
   const [logs, setLogs] = useState<Record<string, string[]>>({});
+  const { download, isLoading, toast: xlsxToast, canDownload } = useExcelDownload();
 
   const filtered = reports.filter(r => {
     const matchSearch = r.receiptNumber.includes(search) || r.buyerName.includes(search) || r.sellerName.includes(search) || r.title.includes(search);
@@ -39,6 +43,35 @@ export default function ReportManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleExcelDownload = () => {
+    const filters = [
+      search && `검색: ${search}`,
+      typeFilter !== '전체' && `유형: ${typeFilter}`,
+      statusFilter !== '전체' && `상태: ${statusFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'reports',
+      menu: '신고/문의 관리',
+      filters,
+      sheets: [{
+        name: '신고문의 목록',
+        data: filtered.map(r => ({
+          '접수번호': r.receiptNumber,
+          '유형': r.type,
+          '주문번호': r.orderNumber,
+          '제목': r.title,
+          '내용': r.content,
+          '구매자': r.buyerName,
+          '판매자': r.sellerName,
+          '처리상태': r.status,
+          '담당자': r.manager,
+          '접수일': r.receivedAt,
+        })),
+      }],
+    });
+  };
 
   const updateStatus = (id: string, status: ReportStatus, logMsg?: string) => {
     setReports(prev => prev.map(r => r.id === id ? { ...r, status } : r));
@@ -84,6 +117,7 @@ export default function ReportManagement() {
             <option value="전체">전체 상태</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -212,6 +246,8 @@ export default function ReportManagement() {
           </div>
         )}
       </div>
+
+      {xlsxToast && <Toast message={xlsxToast.message} type={xlsxToast.type} />}
     </div>
   );
 }

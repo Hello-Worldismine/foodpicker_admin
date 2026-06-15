@@ -4,6 +4,9 @@ import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockOrders } from '../data/mockData';
 import type { Order, OrderStatus, PaymentStatus } from '../types';
 
@@ -21,6 +24,7 @@ export default function OrderManagement() {
   const [newStatus, setNewStatus] = useState<OrderStatus>('결제완료');
   const [changeReason, setChangeReason] = useState('');
   const [refundModal, setRefundModal] = useState(false);
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const filtered = orders.filter(o => {
     const matchSearch = o.orderNumber.includes(search) || o.buyerName.includes(search) || o.sellerName.includes(search) || o.productName.includes(search);
@@ -29,6 +33,34 @@ export default function OrderManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleExcelDownload = () => {
+    const filters = [
+      search && `검색: ${search}`,
+      statusFilter !== '전체' && `주문상태: ${statusFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'orders',
+      menu: '주문 관리',
+      filters,
+      sheets: [{
+        name: '주문 목록',
+        data: filtered.map(o => ({
+          '주문번호': o.orderNumber,
+          '구매자': o.buyerName,
+          '판매자': o.sellerName,
+          '상품명': o.productName,
+          '결제금액(원)': o.amount,
+          '수량': o.quantity,
+          '주문상태': o.status,
+          '결제상태': o.paymentStatus,
+          '픽업시간': o.pickupTime,
+          '주문일시': o.orderedAt,
+        })),
+      }],
+    });
+  };
 
   const handleStatusChange = () => {
     if (!selected || !changeReason.trim()) return alert('변경 사유를 입력해주세요.');
@@ -67,6 +99,7 @@ export default function OrderManagement() {
             <option value="전체">전체 상태</option>
             {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -214,6 +247,8 @@ export default function OrderManagement() {
           </div>
         </div>
       </Modal>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

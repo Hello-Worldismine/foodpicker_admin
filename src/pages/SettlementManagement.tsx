@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Search, Download, CheckCircle, Pause } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Search, CheckCircle, Pause } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockSettlements } from '../data/mockData';
 import type { Settlement, SettlementStatus } from '../types';
 
@@ -18,6 +20,7 @@ export default function SettlementManagement() {
   const [selected, setSelected] = useState<Settlement | null>(null);
   const [holdModal, setHoldModal] = useState(false);
   const [holdReason, setHoldReason] = useState('');
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const HOLD_REASONS = [
     '환불 분쟁 확인 필요',
@@ -53,24 +56,33 @@ export default function SettlementManagement() {
   };
 
   const handleExcelDownload = () => {
-    const data = filtered.map(s => ({
-      '정산기간': s.period,
-      '판매자명': s.sellerName,
-      '사업자번호': s.businessNumber,
-      '총판매금액': s.totalSales,
-      '수수료': s.commission,
-      '환불금액': s.refundAmount,
-      '최종정산금액': s.finalAmount,
-      '정산상태': s.status,
-      '정산예정일': s.scheduledDate,
-      '은행': s.bankName,
-      '계좌번호': s.accountNumber,
-      '예금주': s.accountHolder,
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '정산내역');
-    XLSX.writeFile(wb, `정산내역_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const filters = [
+      search && `검색: ${search}`,
+      statusFilter !== '전체' && `상태: ${statusFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'settlements',
+      menu: '정산 관리',
+      filters,
+      sheets: [{
+        name: '정산내역',
+        data: filtered.map(s => ({
+          '정산기간': s.period,
+          '판매자명': s.sellerName,
+          '사업자번호': s.businessNumber,
+          '총판매금액(원)': s.totalSales,
+          '수수료(원)': s.commission,
+          '환불금액(원)': s.refundAmount,
+          '최종정산금액(원)': s.finalAmount,
+          '정산상태': s.status,
+          '정산예정일': s.scheduledDate,
+          '은행': s.bankName,
+          '계좌번호': s.accountNumber,
+          '예금주': s.accountHolder,
+        })),
+      }],
+    });
   };
 
   const totalFinal = filtered.reduce((sum, s) => sum + s.finalAmount, 0);
@@ -106,9 +118,7 @@ export default function SettlementManagement() {
             <option value="정산완료">정산완료</option>
             <option value="보류">보류</option>
           </select>
-          <button onClick={handleExcelDownload} className="btn-secondary flex items-center gap-2">
-            <Download size={15} /> 엑셀 다운로드
-          </button>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -243,6 +253,8 @@ export default function SettlementManagement() {
           </div>
         </div>
       </Modal>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

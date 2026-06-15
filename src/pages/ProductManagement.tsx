@@ -4,6 +4,9 @@ import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockProducts } from '../data/mockData';
 import type { Product, ProductStatus } from '../types';
 
@@ -31,6 +34,7 @@ export default function ProductManagement() {
   const [selected, setSelected] = useState<Product | null>(null);
   const [actionModal, setActionModal] = useState<'reject' | 'stop' | null>(null);
   const [actionReason, setActionReason] = useState('');
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const filtered = products.filter(p => {
     const matchSearch = p.name.includes(search) || p.storeName.includes(search);
@@ -40,6 +44,42 @@ export default function ProductManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleExcelDownload = () => {
+    const filters = [
+      search && `검색: ${search}`,
+      statusFilter !== '전체' && `상태: ${statusFilter}`,
+      categoryFilter !== '전체' && `카테고리: ${categoryFilter}`,
+    ].filter(Boolean).join(', ');
+
+    download({
+      filename: 'products',
+      menu: '상품 관리',
+      filters,
+      sheets: [{
+        name: '상품 목록',
+        data: filtered.map(p => ({
+          '상품명': p.name,
+          '매장명': p.storeName,
+          '카테고리': p.category,
+          '정가(원)': p.originalPrice,
+          '판매가(원)': p.salePrice,
+          '할인율(%)': p.discountRate,
+          '재고': p.stock,
+          '소비기한': p.expiryDate,
+          '픽업시작': p.pickupStart,
+          '픽업종료': p.pickupEnd,
+          '보관방법': p.storage,
+          '알레르기정보': p.allergyInfo,
+          '원산지': p.originInfo,
+          '상태': p.status,
+          '신고수': p.reportCount,
+          '등록일': p.registeredAt,
+          '수정일': p.updatedAt,
+        })),
+      }],
+    });
+  };
 
   const updateStatus = (id: string, status: ProductStatus, memo?: string) => {
     setProducts(prev => prev.map(p => p.id === id ? { ...p, status, memo: memo ?? p.memo } : p));
@@ -90,6 +130,7 @@ export default function ProductManagement() {
           <select className="input w-32" value={categoryFilter} onChange={e => { setCategoryFilter(e.target.value); setPage(1); }}>
             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
 
@@ -264,6 +305,8 @@ export default function ProductManagement() {
           </div>
         </div>
       </Modal>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

@@ -3,6 +3,9 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { Leaf, Package, TrendingDown, DollarSign } from 'lucide-react';
+import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
+import Toast from '../components/ui/Toast';
+import { useExcelDownload } from '../hooks/useExcelDownload';
 
 const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'];
 
@@ -34,6 +37,40 @@ const monthlyData = [
 ];
 
 export default function EnvStats() {
+  const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  const handleExcelDownload = () => {
+    download({
+      filename: 'env_stats',
+      menu: '환경 통계',
+      filters: '전체',
+      sheets: [
+        {
+          name: '월별 현황',
+          data: monthlyData.map(d => ({
+            '월': d.month,
+            '판매 상품 수(개)': d.products,
+            '예상 폐기 감소량(kg, 추정)': d.kg,
+          })),
+        },
+        {
+          name: '지역별 현황',
+          data: regionData.map(d => ({
+            '지역': d.region,
+            '예상 폐기 감소량(kg, 추정)': d.kg,
+          })),
+        },
+        {
+          name: '카테고리별 현황',
+          data: categoryWasteData.map(d => ({
+            '카테고리': d.name,
+            '비율(%, 추정)': d.value,
+          })),
+        },
+      ],
+    });
+  };
+
   const stats = [
     { label: '누적 판매 상품 수', value: '9,840개', icon: Package, color: 'text-primary', bg: 'bg-primary-light', note: '' },
     { label: '예상 음식물 폐기 감소량', value: '2,460kg', icon: Leaf, color: 'text-primary', bg: 'bg-primary-light', note: '* 상품 평균 250g 기준 추정' },
@@ -43,9 +80,12 @@ export default function EnvStats() {
 
   return (
     <div className="space-y-6">
-      {/* Disclaimer */}
-      <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-4 text-sm text-yellow-700">
-        ⚠️ 이 페이지의 모든 수치는 <strong>예상 또는 추정값</strong>으로, 실제 측정값과 다를 수 있습니다. 참고용으로만 활용해 주세요.
+      {/* Disclaimer + Download */}
+      <div className="flex items-center gap-4">
+        <div className="flex-1 bg-yellow-50 border border-yellow-100 rounded-xl p-4 text-sm text-yellow-700">
+          ⚠️ 이 페이지의 모든 수치는 <strong>예상 또는 추정값</strong>으로, 실제 측정값과 다를 수 있습니다. 참고용으로만 활용해 주세요.
+        </div>
+        <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
       </div>
 
       {/* Summary Cards */}
@@ -109,6 +149,8 @@ export default function EnvStats() {
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

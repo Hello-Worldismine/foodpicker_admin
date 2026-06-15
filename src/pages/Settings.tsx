@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Save } from 'lucide-react';
+import { Save, Download } from 'lucide-react';
+import { useAdmin } from '../context/AdminContext';
 
 export default function Settings() {
+  const { downloadLogs } = useAdmin();
   const [settings, setSettings] = useState({
     siteName: 'FoodPicker 관리자',
     commissionRate: 10,
@@ -94,6 +96,43 @@ export default function Settings() {
         <Save size={16} />
         {saved ? '저장되었습니다!' : '설정 저장'}
       </button>
+
+      {/* Download Log */}
+      <div className="card p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Download size={16} className="text-primary" />
+          <h2 className="font-semibold">엑셀 다운로드 로그</h2>
+          <span className="text-xs text-gray-400 ml-auto">총 {downloadLogs.length}건</span>
+        </div>
+        {downloadLogs.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-8">다운로드 기록이 없습니다.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-soft-gray/50">
+                  {['다운로드일시', '관리자', '메뉴', '적용 필터', '건수'].map(h => (
+                    <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {downloadLogs.map(log => (
+                  <tr key={log.id} className="border-b border-gray-50 hover:bg-soft-gray/50">
+                    <td className="px-3 py-2 text-xs text-gray-400 whitespace-nowrap">{log.downloadedAt}</td>
+                    <td className="px-3 py-2 font-medium text-xs">{log.adminName}</td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="badge bg-primary-light text-primary">{log.menu}</span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-500 max-w-48 truncate">{log.filters}</td>
+                    <td className="px-3 py-2 text-xs font-medium text-primary">{log.count.toLocaleString()}건</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

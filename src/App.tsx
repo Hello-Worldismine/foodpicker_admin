@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AdminProvider } from './context/AdminContext';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import SellerManagement from './pages/SellerManagement';
@@ -16,6 +17,7 @@ import Settings from './pages/Settings';
 
 export default function App() {
   return (
+    <AdminProvider>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
@@ -35,5 +37,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </AdminProvider>
   );
 }
