@@ -1,0 +1,108 @@
+import { Search, Bell, LogOut, ChevronDown } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { useState } from 'react';
+
+const pageTitles: Record<string, string> = {
+  '/': '대시보드',
+  '/sellers': '판매자 관리',
+  '/products': '상품 관리',
+  '/orders': '주문 관리',
+  '/settlements': '정산 관리',
+  '/reports': '신고/문의 관리',
+  '/reviews': '리뷰 관리',
+  '/banners': '배너/공지 관리',
+  '/categories': '카테고리 관리',
+  '/coupons': '쿠폰/프로모션',
+  '/env-stats': '환경 통계',
+  '/admins': '관리자 계정',
+  '/settings': '설정',
+};
+
+interface HeaderProps {
+  sidebarWidth: number;
+}
+
+const notifications = [
+  { id: 1, text: '소비기한 경과 상품 등록 시도 3건', time: '방금', type: 'warn' },
+  { id: 2, text: '신규 판매자 신청 8건 검토 필요', time: '10분 전', type: 'info' },
+  { id: 3, text: '신고 누적 판매자 2곳 확인 필요', time: '1시간 전', type: 'warn' },
+];
+
+export default function Header({ sidebarWidth }: HeaderProps) {
+  const location = useLocation();
+  const [showNotif, setShowNotif] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+
+  const pageTitle = Object.entries(pageTitles).find(([path]) =>
+    path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
+  )?.[1] ?? '페이지';
+
+  return (
+    <header
+      className="fixed top-0 right-0 h-16 bg-white border-b border-gray-100 flex items-center px-6 gap-4 z-20 transition-all duration-300"
+      style={{ left: sidebarWidth }}
+    >
+      <h1 className="text-lg font-semibold text-charcoal mr-auto">{pageTitle}</h1>
+
+      {/* Search */}
+      <div className="relative hidden sm:block">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          placeholder="검색..."
+          className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+        />
+      </div>
+
+      {/* Notifications */}
+      <div className="relative">
+        <button
+          onClick={() => { setShowNotif(!showNotif); setShowProfile(false); }}
+          className="relative p-2 rounded-lg hover:bg-soft-gray transition-colors"
+        >
+          <Bell size={20} className="text-gray-600" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-alert-red rounded-full" />
+        </button>
+        {showNotif && (
+          <div className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-50">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <p className="text-sm font-semibold">알림</p>
+            </div>
+            {notifications.map(n => (
+              <div key={n.id} className="px-4 py-3 hover:bg-soft-gray cursor-pointer border-b border-gray-50 last:border-0">
+                <p className="text-sm text-charcoal">{n.text}</p>
+                <p className="text-xs text-gray-400 mt-1">{n.time}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Profile */}
+      <div className="relative">
+        <button
+          onClick={() => { setShowProfile(!showProfile); setShowNotif(false); }}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-soft-gray transition-colors"
+        >
+          <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center">
+            <span className="text-white text-xs font-bold">김</span>
+          </div>
+          <span className="text-sm font-medium hidden sm:block">김관리</span>
+          <ChevronDown size={14} className="text-gray-400" />
+        </button>
+        {showProfile && (
+          <div className="absolute right-0 top-12 w-44 bg-white rounded-xl shadow-lg border border-gray-100 z-50">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <p className="text-sm font-semibold">김관리</p>
+              <p className="text-xs text-gray-400">최고관리자</p>
+            </div>
+            <button className="flex items-center gap-2 w-full px-4 py-3 text-sm text-alert-red hover:bg-soft-gray transition-colors">
+              <LogOut size={16} />
+              로그아웃
+            </button>
+          </div>
+        )}
+      </div>
+    </header>
+  );
+}
