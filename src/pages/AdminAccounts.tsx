@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Plus, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
 import Modal from '../components/ui/Modal';
-import Badge from '../components/ui/Badge';
 import { mockAdmins } from '../data/mockData';
 import type { AdminAccount, AdminRole } from '../types';
 

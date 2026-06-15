@@ -127,10 +127,10 @@ export default function EnvStats() {
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={categoryWasteData} cx="50%" cy="50%" outerRadius={80} dataKey="value"
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
                 {categoryWasteData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
-              <Tooltip formatter={(v: number) => [`${v}%`, '비율(추정)']} />
+              <Tooltip formatter={(v) => [`${v as number}%`, '비율(추정)']} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -144,7 +144,7 @@ export default function EnvStats() {
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis type="number" tick={{ fontSize: 12 }} />
             <YAxis dataKey="region" type="category" tick={{ fontSize: 12 }} width={80} />
-            <Tooltip formatter={(v: number) => [`${v}kg`, '폐기 감소량(추정)']} />
+            <Tooltip formatter={(v) => [`${v as number}kg`, '폐기 감소량(추정)']} />
             <Bar dataKey="kg" fill="#22A06B" radius={[0, 4, 4, 0]} name="감소량(kg, 추정)" />
           </BarChart>
         </ResponsiveContainer>

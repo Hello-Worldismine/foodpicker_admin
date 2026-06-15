@@ -8,10 +8,9 @@ import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockOrders } from '../data/mockData';
-import type { Order, OrderStatus, PaymentStatus } from '../types';
+import type { Order, OrderStatus } from '../types';
 
 const ORDER_STATUSES: OrderStatus[] = ['결제완료', '픽업대기', '픽업완료', '취소요청', '환불완료', '노쇼', '분쟁중'];
-const PAYMENT_STATUSES: PaymentStatus[] = ['결제완료', '환불완료', '환불대기', '결제취소'];
 const PAGE_SIZE = 7;
 
 export default function OrderManagement() {

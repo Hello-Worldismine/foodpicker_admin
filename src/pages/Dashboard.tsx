@@ -1,14 +1,14 @@
 import { useNavigate } from 'react-router-dom';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
   TrendingUp, ShoppingCart, CheckCircle, XCircle,
   Store, Flag, CreditCard, AlertTriangle, ArrowRight
 } from 'lucide-react';
 import {
-  mockDashboardStats, mockDailyOrders, mockCategoryStats,
+  mockDailyOrders, mockCategoryStats,
   mockHourlyPickups
 } from '../data/mockData';
 
@@ -89,7 +89,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `${(v/10000).toFixed(0)}만`} />
-              <Tooltip formatter={(v: number) => [`${v.toLocaleString()}원`, '거래액']} />
+              <Tooltip formatter={(v) => [`${(v as number).toLocaleString()}원`, '거래액']} />
               <Area type="monotone" dataKey="revenue" stroke="#22A06B" fill="url(#revenueGrad)" strokeWidth={2} name="거래액" />
             </AreaChart>
           </ResponsiveContainer>
@@ -102,7 +102,7 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-charcoal mb-4">카테고리별 판매량</h2>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
-              <Pie data={mockCategoryStats} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+              <Pie data={mockCategoryStats} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
                 {mockCategoryStats.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}
@@ -138,7 +138,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(v: number) => [`${v}kg`, '예상 감소량']} />
+              <Tooltip formatter={(v) => [`${v as number}kg`, '예상 감소량']} />
               <Area type="monotone" dataKey="kg" stroke="#22A06B" fill="url(#wasteGrad)" strokeWidth={2} name="감소량(kg)" />
             </AreaChart>
           </ResponsiveContainer>

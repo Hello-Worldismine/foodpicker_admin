@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Search, MessageSquare } from 'lucide-react';
 import Badge from '../components/ui/Badge';
-import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
