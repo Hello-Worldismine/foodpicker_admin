@@ -16,6 +16,8 @@ export default function SettlementManagement() {
   const [settlements, setSettlements] = useState<Settlement[]>(mockSettlements);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<SettlementStatus | '전체'>('전체');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Settlement | null>(null);
   const [holdModal, setHoldModal] = useState(false);
@@ -32,7 +34,11 @@ export default function SettlementManagement() {
   const filtered = settlements.filter(s => {
     const matchSearch = s.sellerName.includes(search) || s.businessNumber.includes(search);
     const matchStatus = statusFilter === '전체' || s.status === statusFilter;
-    return matchSearch && matchStatus;
+    const periodStart = s.period.split(' ~ ')[0]?.trim() ?? '';
+    const periodEnd = s.period.split(' ~ ')[1]?.trim() ?? '';
+    const matchDateFrom = !dateFrom || periodStart >= dateFrom;
+    const matchDateTo = !dateTo || periodEnd <= dateTo;
+    return matchSearch && matchStatus && matchDateFrom && matchDateTo;
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -59,6 +65,7 @@ export default function SettlementManagement() {
     const filters = [
       search && `검색: ${search}`,
       statusFilter !== '전체' && `상태: ${statusFilter}`,
+      (dateFrom || dateTo) && `기간: ${dateFrom || '시작'} ~ ${dateTo || '종료'}`,
     ].filter(Boolean).join(', ');
 
     download({
@@ -107,7 +114,7 @@ export default function SettlementManagement() {
 
       {/* Filters */}
       <div className="card p-4">
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3 items-center">
           <div className="relative flex-1 min-w-48">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input className="input pl-9" placeholder="판매자명, 사업자번호 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
@@ -118,6 +125,20 @@ export default function SettlementManagement() {
             <option value="정산완료">정산완료</option>
             <option value="보류">보류</option>
           </select>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 whitespace-nowrap">정산 기간</span>
+            <input type="date" className="input w-36 text-sm" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} />
+            <span className="text-gray-400 text-sm">~</span>
+            <input type="date" className="input w-36 text-sm" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
+                className="text-xs text-gray-400 hover:text-alert-red transition-colors whitespace-nowrap"
+              >
+                초기화
+              </button>
+            )}
+          </div>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
       </div>
