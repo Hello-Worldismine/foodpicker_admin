@@ -20,7 +20,9 @@ export type SettlementStatus = '정산예정' | '정산완료' | '보류';
 
 // 아래 상태들은 실제 판매자/사용자 앱 DB 스키마에 대응 테이블이 없는 관리자 전용 개념이다.
 export type ReportStatus = '접수' | '확인중' | '판매자 답변 대기' | '구매자 답변 대기' | '환불 처리' | '종결';
-export type ReviewStatus = '정상' | '숨김' | '신고검토' | '삭제';
+// '신고검토'는 처리 대기 중(미결) 상태. 관리자가 검토를 마치면 아래 3개 결과값 중 하나로 전환되며,
+// 신고 이력이 있었다는 사실은 배지에 남기되(신고검토-*), 신고 없이 바로 조치한 경우엔 접두어 없는 정상/숨김/삭제를 사용한다.
+export type ReviewStatus = '정상' | '숨김' | '삭제' | '신고검토' | '신고검토-정상' | '신고검토-숨김' | '신고검토-삭제';
 export type AdminRole = '최고관리자' | '운영관리자' | '정산관리자' | 'CS관리자' | '읽기전용';
 
 export interface Seller {
@@ -125,13 +127,17 @@ export interface ReportEvidence {
   url: string;
 }
 
+// 문의 주체 — 사용자(구매자)의 신고/문의인지, 판매자(점주)가 플랫폼에 남긴 1:1 문의인지 구분.
+export type InquirerType = '사용자' | '판매자';
+
 export interface Report {
   id: string;
   receiptNumber: string;
+  inquirerType: InquirerType;
   type: string;
-  orderNumber: string;
-  buyerName: string;
-  sellerName: string;
+  orderNumber?: string; // 사용자 문의는 대부분 특정 주문에 연결되지만, 판매자 문의(정산/계정 등)는 주문과 무관할 수 있음
+  buyerName?: string; // 사용자 문의일 때만 존재
+  sellerName: string; // 사용자 문의: 신고 대상 매장 / 판매자 문의: 문의를 남긴 본인 매장
   title: string;
   content: string;
   evidence?: ReportEvidence[];

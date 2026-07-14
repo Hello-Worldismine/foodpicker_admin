@@ -81,17 +81,21 @@ function evidencePhotoPlaceholder(emoji: string, bg: string) {
 }
 
 export const mockReports: Report[] = [
-  { id: 'r1', receiptNumber: 'RPT-2406-001', type: '상품 상태가 설명과 달라요', orderNumber: 'FP-1004', buyerName: '박민수', sellerName: '카페 디저트', title: '케이크 상태가 사진과 달랐어요', content: '주문한 케이크가 사진과 전혀 달랐습니다. 크림이 다 녹아있었고 모양도 달랐어요.', evidence: [
+  { id: 'r1', receiptNumber: 'RPT-2406-001', inquirerType: '사용자', type: '상품 상태가 설명과 달라요', orderNumber: 'FP-1004', buyerName: '박민수', sellerName: '카페 디저트', title: '케이크 상태가 사진과 달랐어요', content: '주문한 케이크가 사진과 전혀 달랐습니다. 크림이 다 녹아있었고 모양도 달랐어요.', evidence: [
     { type: 'image', url: evidencePhotoPlaceholder('🍰', '#F3E8E8') },
     { type: 'image', url: evidencePhotoPlaceholder('😖', '#FDECEC') },
     { type: 'video', url: evidencePhotoPlaceholder('🎬', '#E8ECF3') },
   ], status: '확인중', receivedAt: '2024-06-15 19:30', manager: '김관리', memo: '' },
-  { id: 'r2', receiptNumber: 'RPT-2406-002', type: '소비기한이 지났어요', orderNumber: 'FP-0989', buyerName: '이영희', sellerName: '맛있는반찬', title: '소비기한이 이미 지난 상품을 팔았어요', content: '구매한 반찬에 소비기한이 이미 지나있었습니다.', evidence: [
+  { id: 'r2', receiptNumber: 'RPT-2406-002', inquirerType: '사용자', type: '소비기한이 지났어요', orderNumber: 'FP-0989', buyerName: '이영희', sellerName: '맛있는반찬', title: '소비기한이 이미 지난 상품을 팔았어요', content: '구매한 반찬에 소비기한이 이미 지나있었습니다.', evidence: [
     { type: 'image', url: evidencePhotoPlaceholder('🥘', '#F3E8E8') },
     { type: 'image', url: evidencePhotoPlaceholder('📅', '#FDF3E7') },
   ], status: '환불 처리', receivedAt: '2024-06-14 21:00', manager: '이운영', memo: '환불 처리 완료' },
-  { id: 'r3', receiptNumber: 'RPT-2406-003', type: '결제/환불 문제가 있어요', orderNumber: 'FP-1003', buyerName: '이영희', sellerName: '과일음료', title: '취소 후 환불이 안 돼요', content: '주문 취소를 했는데 환불이 아직 안 됐습니다.', status: '판매자 답변 대기', receivedAt: '2024-06-15 16:00', manager: '김관리', memo: '' },
-  { id: 'r4', receiptNumber: 'RPT-2406-004', type: '매장이 픽업을 거부했어요', orderNumber: 'FP-1007', buyerName: '한예슬', sellerName: '신선도시락', title: '픽업하러 갔는데 매장이 닫혀있었어요', content: '픽업 시간에 맞춰 갔는데 매장 문이 닫혀있었습니다.', status: '접수', receivedAt: '2024-06-15 18:30', manager: '미배정', memo: '' },
+  { id: 'r3', receiptNumber: 'RPT-2406-003', inquirerType: '사용자', type: '결제/환불 문제가 있어요', orderNumber: 'FP-1003', buyerName: '이영희', sellerName: '과일음료', title: '취소 후 환불이 안 돼요', content: '주문 취소를 했는데 환불이 아직 안 됐습니다.', status: '판매자 답변 대기', receivedAt: '2024-06-15 16:00', manager: '김관리', memo: '' },
+  { id: 'r4', receiptNumber: 'RPT-2406-004', inquirerType: '사용자', type: '매장이 픽업을 거부했어요', orderNumber: 'FP-1007', buyerName: '한예슬', sellerName: '신선도시락', title: '픽업하러 갔는데 매장이 닫혀있었어요', content: '픽업 시간에 맞춰 갔는데 매장 문이 닫혀있었습니다.', status: '접수', receivedAt: '2024-06-15 18:30', manager: '미배정', memo: '' },
+  // 판매자(점주)가 직접 남긴 1:1 문의 — 구매자/주문과 무관하게 정산·계정 등을 문의
+  { id: 'r5', receiptNumber: 'RPT-2407-001', inquirerType: '판매자', type: '정산 관련 문의', sellerName: '베이커리 달콤', title: '이번 주 정산 금액이 예상보다 적게 들어왔어요', content: '6월 정산 내역을 확인했는데 예상했던 금액보다 적게 입금되었습니다. 수수료 계산이 맞는지 확인 부탁드립니다.', status: '접수', receivedAt: '2024-07-01 10:20', manager: '박정산', memo: '' },
+  { id: 'r6', receiptNumber: 'RPT-2407-002', inquirerType: '판매자', type: '계정/정보 변경 요청', sellerName: '신선도시락', title: '매장 정산 계좌를 변경하고 싶어요', content: '계좌를 국민은행에서 신한은행으로 변경하고 싶습니다. 어떻게 처리하면 될까요?', status: '확인중', receivedAt: '2024-06-28 15:40', manager: '이운영', memo: '' },
+  { id: 'r7', receiptNumber: 'RPT-2407-003', inquirerType: '판매자', type: '이용정지/제재 이의제기', sellerName: '맛있는반찬', title: '이용정지 처리에 이의를 제기합니다', content: '신고 누적으로 이용정지 처리되었는데, 해당 신고 건들은 이미 소명하고 환불 처리까지 완료한 건들입니다. 재검토 부탁드립니다.', status: '접수', receivedAt: '2024-07-02 09:00', manager: '미배정', memo: '' },
 ];
 
 // 목데이터 전용 리뷰 사진 placeholder(실 업로드 파일이 없으므로 SVG를 데이터 URI로 즉석 생성).

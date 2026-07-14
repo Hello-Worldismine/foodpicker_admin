@@ -58,8 +58,11 @@ const reportStatusMap: Record<ReportStatus, BadgeVariant> = {
 const reviewStatusMap: Record<ReviewStatus, BadgeVariant> = {
   '정상': 'green',
   '숨김': 'gray',
-  '신고검토': 'red',
   '삭제': 'gray',
+  '신고검토': 'red',
+  '신고검토-정상': 'green',
+  '신고검토-숨김': 'orange',
+  '신고검토-삭제': 'red',
 };
 
 interface BadgeProps {

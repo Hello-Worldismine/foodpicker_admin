@@ -8,9 +8,9 @@ import Toast from '../components/ui/Toast';
 import Lightbox from '../components/ui/Lightbox';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockReports } from '../data/mockData';
-import type { Report, ReportStatus } from '../types';
+import type { Report, ReportStatus, InquirerType } from '../types';
 
-const REPORT_TYPES = [
+const USER_REPORT_TYPES = [
   '전체',
   '상품 상태가 설명과 달라요',
   '소비기한이 지났어요',
@@ -21,11 +21,22 @@ const REPORT_TYPES = [
   '기타',
 ];
 
+// 판매자(점주)가 직접 남기는 1:1 문의는 구매자 신고와 성격이 달라 유형을 별도로 관리한다.
+const SELLER_INQUIRY_TYPES = [
+  '전체',
+  '정산 관련 문의',
+  '계정/정보 변경 요청',
+  '상품 등록 오류',
+  '이용정지/제재 이의제기',
+  '플랫폼 정책 문의',
+  '기타',
+];
+
 const STATUSES: ReportStatus[] = ['접수', '확인중', '판매자 답변 대기', '구매자 답변 대기', '환불 처리', '종결'];
 const PAGE_SIZE = 6;
 
 // 자주 쓰는 답변 문구 — 선택하면 답변 작성란에 즉시 채워짐(추가 편집 가능)
-const REPLY_TEMPLATES = [
+const USER_REPLY_TEMPLATES = [
   { label: '환불 처리 완료 안내', content: '안녕하세요, 고객님. 문의주신 건 확인 결과 환불 처리가 가능한 사안으로 확인되어 환불 처리해드렸습니다. 이용에 불편을 드려 죄송합니다.' },
   { label: '소비기한 경과 사과 안내', content: '안녕하세요, 고객님. 소비기한이 경과된 상품이 판매된 점 진심으로 사과드립니다. 해당 건은 전액 환불 및 판매자 조치가 완료되었습니다.' },
   { label: '상품 상태 불량 사과 안내', content: '안녕하세요, 고객님. 상품 상태 관련 불편을 드려 죄송합니다. 해당 판매자에게 경고 조치하였으며, 결제하신 금액은 환불 처리해드렸습니다.' },
@@ -34,26 +45,40 @@ const REPLY_TEMPLATES = [
   { label: '처리 완료 안내', content: '안녕하세요, 고객님. 문의주신 건에 대한 처리가 완료되었습니다. 추가 문의사항이 있으시면 언제든 남겨주세요.' },
 ];
 
+const SELLER_REPLY_TEMPLATES = [
+  { label: '정산 문의 답변', content: '안녕하세요, 사장님. 문의주신 정산 내역을 확인한 결과 아래와 같이 안내드립니다. 추가로 궁금하신 점 있으시면 언제든 남겨주세요.' },
+  { label: '계좌/정보 변경 완료 안내', content: '안녕하세요, 사장님. 요청하신 정보 변경이 완료되었습니다. 다음 정산부터 변경된 내용으로 반영됩니다.' },
+  { label: '상품 등록 오류 안내', content: '안녕하세요, 사장님. 문의주신 상품 등록 오류를 확인했습니다. 아래 방법으로 다시 시도해주시면 정상적으로 등록됩니다.' },
+  { label: '이용정지 이의제기 답변', content: '안녕하세요, 사장님. 이의 제기해주신 내용을 재검토했습니다. 검토 결과는 아래와 같이 안내드립니다.' },
+  { label: '정책 안내', content: '안녕하세요, 사장님. 문의주신 플랫폼 정책에 대해 아래와 같이 안내드립니다.' },
+  { label: '처리 완료 안내', content: '안녕하세요, 사장님. 문의주신 건에 대한 처리가 완료되었습니다. 추가 문의사항이 있으시면 언제든 남겨주세요.' },
+];
+
 /**
  * [백엔드 연동 안내] 현재 mockReports(목데이터)로만 동작하며, 실 DB에는 신고/문의를 저장할 테이블이 아직 없음(신규 설계 필요).
- * 제안 스키마: reports(id, receipt_code, type, order_id FK, buyer_id FK, seller_id FK, title, content, status, manager_id FK, created_at, updated_at)
+ * 제안 스키마: reports(id, receipt_code, inquirer_type, type, order_id FK NULL 허용, buyer_id FK NULL 허용,
+ *   seller_id FK, title, content, status, manager_id FK, created_at, updated_at)
  * + 처리 이력(logs state)은 report_activity_logs(report_id, admin_id, message, created_at) 같은 별도 테이블 또는 감사로그 테이블 재사용 권장.
  * API 예시:
- * - GET /api/admin/reports?search=&type=&status=&page=
+ * - GET /api/admin/reports?inquirerType=&search=&type=&status=&page=
  * - PATCH /api/admin/reports/:id/status  { status }
  * - POST /api/admin/reports/:id/reply  { content }  → 처리 이력에 기록
- * - POST /api/admin/reports/:id/refund  → orders/settlements 쪽 환불 플로우와 연동 필요
- * - 과거 문의/신고 이력: 지금은 이미 불러온 reports 배열에서 client-side로 buyerName 매칭해 계산 중.
- *   실 연동 시엔 목록이 페이지네이션되므로 GET /api/admin/reports?buyerId=&excludeId= 같은 전용 조회가 필요함(구매자는 buyer_id로 매칭, buyerName 문자열 매칭은 동명이인 오탐 위험).
- * - 내부 메모(memo): 고객에게 절대 노출되면 안 되는 CS 전용 비공개 필드. 사용자/판매자 앱에 내려주는 응답에는 이 필드를 포함하지 말 것.
- * - 답변 템플릿(REPLY_TEMPLATES)은 현재 프론트에 하드코딩. 운영팀이 직접 문구를 추가/수정하게 하려면
- *   reply_templates(id, label, content) 테이블 + 관리 화면이 별도로 필요.
+ * - POST /api/admin/reports/:id/refund  → orders/settlements 쪽 환불 플로우와 연동 필요(사용자 문의에만 해당)
+ * - 판매자 1:1 문의는 판매자 앱에 문의 작성 화면이 신규로 필요: POST /api/seller/inquiries { type, title, content }
+ *   (buyer_id/order_id 없이 seller_id만으로 생성됨). 사용자 문의는 기존처럼 주문 상세에서 신고하기로 생성.
+ * - 과거 문의/신고 이력: 지금은 이미 불러온 reports 배열에서 client-side로 매칭해 계산 중(사용자 문의는 buyerName,
+ *   판매자 문의는 sellerName 기준). 실 연동 시엔 목록이 페이지네이션되므로 GET /api/admin/reports?buyerId=/sellerId=&excludeId=
+ *   같은 전용 조회가 필요함(문자열 이름 매칭은 동명이인 오탐 위험이 있으므로 buyer_id/seller_id로 매칭할 것).
+ * - 내부 메모(memo): 고객/판매자에게 절대 노출되면 안 되는 CS 전용 비공개 필드. 사용자/판매자 앱 응답에는 포함하지 말 것.
+ * - 답변 템플릿(USER_REPLY_TEMPLATES/SELLER_REPLY_TEMPLATES)은 현재 프론트에 하드코딩. 운영팀이 직접 문구를
+ *   추가/수정하게 하려면 reply_templates(id, inquirer_type, label, content) 테이블 + 관리 화면이 별도로 필요.
  * - evidence(증빙 사진/영상)도 실 DB에 컬럼이 없음 — report_evidence(report_id, type, url, created_at) 같은
  *   별도 테이블 + Supabase Storage 연동이 필요. 사용자 앱에서 여러 장 업로드를 지원해야 하므로 1:N 관계로 설계할 것.
  */
 
 export default function ReportManagement() {
   const [reports, setReports] = useState<Report[]>(mockReports);
+  const [tab, setTab] = useState<InquirerType>('사용자');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('전체');
   const [statusFilter, setStatusFilter] = useState<ReportStatus | '전체'>('전체');
@@ -102,8 +127,21 @@ export default function ReportManagement() {
     setHistoryStack([]);
   };
 
+  const switchTab = (t: InquirerType) => {
+    setTab(t);
+    setSearch('');
+    setTypeFilter('전체');
+    setStatusFilter('전체');
+    setPage(1);
+    closePanel();
+  };
+
+  const currentTypes = tab === '사용자' ? USER_REPORT_TYPES : SELLER_INQUIRY_TYPES;
+  const currentTemplates = tab === '사용자' ? USER_REPLY_TEMPLATES : SELLER_REPLY_TEMPLATES;
+
   const filtered = reports.filter(r => {
-    const matchSearch = r.receiptNumber.includes(search) || r.buyerName.includes(search) || r.sellerName.includes(search) || r.title.includes(search);
+    if (r.inquirerType !== tab) return false;
+    const matchSearch = r.receiptNumber.includes(search) || (r.buyerName ?? '').includes(search) || r.sellerName.includes(search) || r.title.includes(search);
     const matchType = typeFilter === '전체' || r.type === typeFilter;
     const matchStatus = statusFilter === '전체' || r.status === statusFilter;
     return matchSearch && matchType && matchStatus;
@@ -111,29 +149,36 @@ export default function ReportManagement() {
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const buyerHistory = selected ? reports.filter(r => r.buyerName === selected.buyerName && r.id !== selected.id) : [];
+  // 사용자 문의는 구매자(buyerName), 판매자 문의는 신청 매장(sellerName) 기준으로 과거 이력을 판별한다.
+  const buyerHistory = selected
+    ? reports.filter(r => r.id !== selected.id && r.inquirerType === selected.inquirerType && (
+        selected.inquirerType === '판매자' ? r.sellerName === selected.sellerName : r.buyerName === selected.buyerName
+      ))
+    : [];
 
   const handleExcelDownload = () => {
     const filters = [
+      `구분: ${tab} 문의`,
       search && `검색: ${search}`,
       typeFilter !== '전체' && `유형: ${typeFilter}`,
       statusFilter !== '전체' && `상태: ${statusFilter}`,
     ].filter(Boolean).join(', ');
 
     download({
-      filename: 'reports',
+      filename: tab === '사용자' ? 'user_reports' : 'seller_inquiries',
       menu: '신고/문의 관리',
       filters,
       sheets: [{
         name: '신고문의 목록',
         data: filtered.map(r => ({
           '접수번호': r.receiptNumber,
+          '구분': r.inquirerType,
           '유형': r.type,
-          '주문번호': r.orderNumber,
+          '주문번호': r.orderNumber ?? '-',
           '제목': r.title,
           '내용': r.content,
-          '구매자': r.buyerName,
-          '판매자': r.sellerName,
+          '구매자': r.buyerName ?? '-',
+          '매장': r.sellerName,
           '처리상태': r.status,
           '담당자': r.manager,
           '접수일': r.receivedAt,
@@ -160,7 +205,7 @@ export default function ReportManagement() {
   };
 
   const applyTemplate = (label: string) => {
-    const tpl = REPLY_TEMPLATES.find(t => t.label === label);
+    const tpl = currentTemplates.find(t => t.label === label);
     if (tpl) setReplyText(tpl.content);
     setTemplateChoice('');
   };
@@ -185,15 +230,29 @@ export default function ReportManagement() {
 
   return (
     <div className="space-y-4">
+      {/* Tabs */}
+      <div className="flex gap-1 bg-white rounded-xl p-1 w-fit shadow-sm border border-gray-100">
+        {(['사용자', '판매자'] as InquirerType[]).map(t => (
+          <button key={t} onClick={() => switchTab(t)} className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-primary text-white' : 'text-gray-500 hover:text-charcoal'}`}>
+            {t} 문의
+          </button>
+        ))}
+      </div>
+
       {/* Filters */}
       <div className="card p-4">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-48">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input className="input pl-9" placeholder="접수번호, 구매자, 판매자, 제목 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+            <input
+              className="input pl-9"
+              placeholder={tab === '사용자' ? '접수번호, 구매자, 판매자, 제목 검색' : '접수번호, 매장명, 제목 검색'}
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
+            />
           </div>
           <select className="input w-52" value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(1); }}>
-            {REPORT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {currentTypes.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <select className="input w-40" value={statusFilter} onChange={e => { setStatusFilter(e.target.value as ReportStatus | '전체'); setPage(1); }}>
             <option value="전체">전체 상태</option>
@@ -209,14 +268,17 @@ export default function ReportManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['접수번호', '유형', '제목', '구매자', '판매자', '처리상태', '접수일', '담당자', '관리'].map(h => (
+                  {(tab === '사용자'
+                    ? ['접수번호', '유형', '제목', '구매자', '판매자', '처리상태', '접수일', '담당자', '관리']
+                    : ['접수번호', '유형', '제목', '문의 매장', '처리상태', '접수일', '담당자', '관리']
+                  ).map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
-                  <tr><td colSpan={9}><EmptyState /></td></tr>
+                  <tr><td colSpan={tab === '사용자' ? 9 : 8}><EmptyState /></td></tr>
                 ) : paginated.map(report => (
                   <tr
                     key={report.id}
@@ -226,7 +288,7 @@ export default function ReportManagement() {
                     <td className="px-4 py-3 font-mono text-xs">{report.receiptNumber}</td>
                     <td className="px-4 py-3 text-xs text-gray-500 max-w-28 truncate">{report.type}</td>
                     <td className="px-4 py-3 font-medium text-charcoal max-w-36 truncate">{report.title}</td>
-                    <td className="px-4 py-3">{report.buyerName}</td>
+                    {tab === '사용자' && <td className="px-4 py-3">{report.buyerName}</td>}
                     <td className="px-4 py-3 text-gray-600">{report.sellerName}</td>
                     <td className="px-4 py-3"><Badge type="report">{report.status}</Badge></td>
                     <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{report.receivedAt}</td>
@@ -269,24 +331,26 @@ export default function ReportManagement() {
 
               {/* Info */}
               <section>
-                <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">신고 정보</p>
+                <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">{selected.inquirerType === '판매자' ? '문의 정보' : '신고 정보'}</p>
                 <div className="space-y-1.5 text-sm">
                   {[
                     ['접수번호', selected.receiptNumber],
                     ['유형', selected.type],
-                    ['주문번호', selected.orderNumber],
+                    ...(selected.orderNumber ? [['주문번호', selected.orderNumber]] : []),
                   ].map(([l, v]) => (
                     <div key={l} className="flex justify-between">
                       <span className="text-gray-500">{l}</span>
                       <span className="text-charcoal text-right text-xs">{v}</span>
                     </div>
                   ))}
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500">구매자</span>
-                    <span className="text-charcoal text-right text-xs">{selected.buyerName}</span>
-                  </div>
+                  {selected.inquirerType === '사용자' && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500">구매자</span>
+                      <span className="text-charcoal text-right text-xs">{selected.buyerName}</span>
+                    </div>
+                  )}
                   {[
-                    ['판매자', selected.sellerName],
+                    [selected.inquirerType === '판매자' ? '문의 매장' : '판매자', selected.sellerName],
                     ['담당자', selected.manager],
                   ].map(([l, v]) => (
                     <div key={l} className="flex justify-between">
@@ -301,13 +365,18 @@ export default function ReportManagement() {
                   onClick={() => setShowHistory(v => !v)}
                   className="mt-2 w-full flex items-center justify-between text-xs text-primary bg-primary-light hover:bg-primary/10 rounded-lg px-3 py-2 transition-colors"
                 >
-                  <span className="flex items-center gap-1.5"><History size={13} /> 과거 문의/신고 이력 보기 ({buyerHistory.length}건)</span>
+                  <span className="flex items-center gap-1.5">
+                    <History size={13} />
+                    {selected.inquirerType === '판매자' ? '이 매장의 과거 문의 이력 보기' : '과거 문의/신고 이력 보기'} ({buyerHistory.length}건)
+                  </span>
                   <ChevronDown size={14} className={`transition-transform ${showHistory ? 'rotate-180' : ''}`} />
                 </button>
                 {showHistory && (
                   <div className="mt-2 space-y-1.5">
                     {buyerHistory.length === 0 ? (
-                      <p className="text-xs text-gray-400 px-1">이 구매자의 과거 문의/신고 이력이 없습니다.</p>
+                      <p className="text-xs text-gray-400 px-1">
+                        {selected.inquirerType === '판매자' ? '이 매장의 과거 문의 이력이 없습니다.' : '이 구매자의 과거 문의/신고 이력이 없습니다.'}
+                      </p>
                     ) : buyerHistory.map(h => (
                       <button
                         key={h.id}
@@ -389,7 +458,7 @@ export default function ReportManagement() {
                 {selected.status !== '확인중' && (
                   <button onClick={() => updateStatus(selected.id, '확인중', '확인중으로 상태 변경')} className="btn-secondary text-xs flex-1">확인중</button>
                 )}
-                {selected.status !== '환불 처리' && selected.status !== '종결' && (
+                {selected.inquirerType === '사용자' && selected.status !== '환불 처리' && selected.status !== '종결' && (
                   <button onClick={handleRefund} className="btn-warning text-xs flex-1">환불 처리</button>
                 )}
                 {selected.status !== '종결' && (
@@ -407,7 +476,7 @@ export default function ReportManagement() {
                     onChange={e => applyTemplate(e.target.value)}
                   >
                     <option value="">⚡ 빠른 답변 템플릿 선택...</option>
-                    {REPLY_TEMPLATES.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
+                    {currentTemplates.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
                   </select>
                   <textarea
                     className="input h-24 resize-none text-sm"

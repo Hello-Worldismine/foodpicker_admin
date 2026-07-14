@@ -9,15 +9,23 @@ import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockReviews } from '../data/mockData';
 import type { Review, ReviewStatus } from '../types';
 
-const STATUSES: ReviewStatus[] = ['정상', '숨김', '신고검토', '삭제'];
 const PAGE_SIZE = 7;
+
+const isHidden = (s: ReviewStatus) => s === '숨김' || s === '신고검토-숨김';
+const isDeleted = (s: ReviewStatus) => s === '삭제' || s === '신고검토-삭제';
+const isPendingReview = (s: ReviewStatus) => s === '신고검토';
 
 /**
  * [백엔드 연동 안내] 현재 mockReviews(목데이터)로 동작 중. 실 서비스는 Supabase `reviews` 테이블(판매자 앱과 공유)에 대응됨.
  * - 목록/검색: GET /api/admin/reviews?search=&status=&page=
  * - ownerReply/ownerRepliedAt은 실 DB 컬럼(owner_reply, owner_replied_at)이 그대로 존재하므로 조회만 하면 됨.
- * ⚠️ status(정상/숨김/신고검토/삭제) 모더레이션 상태와 reportCount(신고수)는 실 DB `reviews` 테이블에 대응 컬럼이 없음.
- *    실 연동 전 백엔드에서 컬럼 추가(예: moderation_status, report_count) 또는 별도 review_reports 테이블 설계가 선행되어야 함.
+ * ⚠️ status(정상/숨김/삭제/신고검토/신고검토-정상/신고검토-숨김/신고검토-삭제) 모더레이션 상태와 reportCount(신고수)는
+ *    실 DB `reviews` 테이블에 대응 컬럼이 없음. 실 연동 전 백엔드에서 moderation_status, report_count 컬럼 추가
+ *    또는 별도 review_reports 테이블 설계가 선행되어야 함.
+ *    신고검토-* 3종은 "신고가 접수되어 검토를 거친 뒤의 결과"임을 구분하기 위한 값으로, 정상/숨김/삭제와 실제
+ *    노출 동작은 동일하다(접두어 없는 값은 신고 없이 관리자가 바로 조치한 경우). 통계/감사 목적의 구분이므로
+ *    moderation_status ENUM에 이 7개 값을 그대로 두거나, is_reported(boolean) + status(정상|숨김|삭제|신고검토) 조합으로
+ *    설계해도 무방하다.
  * ⚠️ images(리뷰 사진)도 실 DB에 컬럼이 없음 — 사용자 앱에서 첨부 업로드를 지원하려면 reviews.images(text[]) 컬럼 추가 +
  *    Supabase Storage 버킷 연동이 선행되어야 함. 관리자는 신고 처리 시 증빙 사진 확인 용도로 조회만 하면 된다.
  */
@@ -90,9 +98,21 @@ export default function ReviewManagement() {
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input className="input pl-9" placeholder="상품명, 매장명, 구매자 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
           </div>
-          <select className="input w-32" value={statusFilter} onChange={e => { setStatusFilter(e.target.value as ReviewStatus | '전체'); setPage(1); }}>
+          <select className="input w-40" value={statusFilter} onChange={e => { setStatusFilter(e.target.value as ReviewStatus | '전체'); setPage(1); }}>
             <option value="전체">전체 상태</option>
-            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            <optgroup label="정상">
+              <option value="정상">정상</option>
+              <option value="신고검토-정상">신고검토-정상</option>
+            </optgroup>
+            <optgroup label="숨김">
+              <option value="숨김">숨김</option>
+              <option value="신고검토-숨김">신고검토-숨김</option>
+            </optgroup>
+            <optgroup label="삭제">
+              <option value="삭제">삭제</option>
+              <option value="신고검토-삭제">신고검토-삭제</option>
+            </optgroup>
+            <option value="신고검토">신고검토 (대기중)</option>
           </select>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
@@ -200,17 +220,28 @@ export default function ReviewManagement() {
                 <textarea className="input h-20 resize-none text-sm" placeholder="관리자 메모 입력..." value={memo} onChange={e => setMemo(e.target.value)} />
               </section>
 
-              <div className="flex gap-2">
-                {selected.status !== '숨김' && (
-                  <button onClick={() => updateStatus(selected.id, '숨김')} className="btn-secondary flex-1 text-xs">숨김 처리</button>
-                )}
-                {selected.status === '숨김' && (
-                  <button onClick={() => updateStatus(selected.id, '정상')} className="btn-primary flex-1 text-xs">숨김 해제</button>
-                )}
-                {selected.status !== '삭제' && (
-                  <button onClick={() => { if (confirm('삭제 처리하시겠습니까?')) updateStatus(selected.id, '삭제'); }} className="btn-danger flex-1 text-xs">삭제</button>
-                )}
-              </div>
+              {isPendingReview(selected.status) ? (
+                <div>
+                  <p className="text-xs text-gray-500 mb-2">신고 검토 결과를 선택하세요.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => updateStatus(selected.id, '신고검토-정상')} className="btn-primary flex-1 text-xs">문제없음</button>
+                    <button onClick={() => updateStatus(selected.id, '신고검토-숨김')} className="btn-secondary flex-1 text-xs">숨김 처리</button>
+                    <button onClick={() => { if (confirm('삭제 처리하시겠습니까?')) updateStatus(selected.id, '신고검토-삭제'); }} className="btn-danger flex-1 text-xs">삭제 처리</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  {!isHidden(selected.status) && (
+                    <button onClick={() => updateStatus(selected.id, '숨김')} className="btn-secondary flex-1 text-xs">숨김 처리</button>
+                  )}
+                  {isHidden(selected.status) && (
+                    <button onClick={() => updateStatus(selected.id, '정상')} className="btn-primary flex-1 text-xs">숨김 해제</button>
+                  )}
+                  {!isDeleted(selected.status) && (
+                    <button onClick={() => { if (confirm('삭제 처리하시겠습니까?')) updateStatus(selected.id, '삭제'); }} className="btn-danger flex-1 text-xs">삭제</button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
