@@ -119,6 +119,12 @@ export interface Settlement {
   memo?: string;
 }
 
+// 상한 음식/소비기한 만료 등 증빙이 필요한 신고 건에 첨부되는 사진·영상 (실 DB엔 아직 컬럼 없음 — 신규 필요)
+export interface ReportEvidence {
+  type: 'image' | 'video';
+  url: string;
+}
+
 export interface Report {
   id: string;
   receiptNumber: string;
@@ -128,6 +134,7 @@ export interface Report {
   sellerName: string;
   title: string;
   content: string;
+  evidence?: ReportEvidence[];
   status: ReportStatus;
   receivedAt: string;
   manager: string;
@@ -141,6 +148,7 @@ export interface Review {
   buyerName: string;
   rating: number;
   content: string;
+  images?: string[]; // 구매자가 첨부한 리뷰 사진 (실 DB reviews 테이블엔 아직 컬럼 없음 — 신규 필요)
   writtenAt: string;
   reportCount: number;
   status: ReviewStatus;

@@ -4,7 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
-  TrendingUp, ShoppingCart, CheckCircle, XCircle,
+  TrendingUp, ShoppingCart, XCircle,
   Store, Flag, CreditCard, AlertTriangle, ArrowRight
 } from 'lucide-react';
 import {
@@ -23,11 +23,10 @@ const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'
  * 집계 쿼리는 실시간 계산 비용이 크므로 배치/캐시(예: 5분 주기 머티리얼라이즈드 뷰) 설계를 권장.
  */
 const statCards = [
+  { label: '신규 판매자 신청', value: '8건', icon: Store, color: 'text-warm-orange', bg: 'bg-orange-50', sub: '검토 필요' },
   { label: '오늘 거래액', value: '1,284,000원', icon: TrendingUp, color: 'text-primary', bg: 'bg-primary-light', sub: '어제 대비 +12%' },
   { label: '오늘 주문 수', value: '245건', icon: ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50', sub: '어제 대비 +8' },
-  { label: '픽업 완료', value: '198건', icon: CheckCircle, color: 'text-primary', bg: 'bg-primary-light', sub: '완료율 80.8%' },
   { label: '오늘 취소', value: '12건', icon: XCircle, color: 'text-alert-red', bg: 'bg-red-50', sub: '취소율 4.9%' },
-  { label: '신규 판매자 신청', value: '8건', icon: Store, color: 'text-warm-orange', bg: 'bg-orange-50', sub: '검토 필요' },
   { label: '신고 접수', value: '3건', icon: Flag, color: 'text-alert-red', bg: 'bg-red-50', sub: '미처리 2건' },
   { label: '정산 보류', value: '1건', icon: CreditCard, color: 'text-purple-600', bg: 'bg-purple-50', sub: '확인 필요' },
 ];
@@ -56,7 +55,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
         {statCards.map(({ label, value, icon: Icon, color, bg, sub }) => (
           <div key={label} className="card p-4">
             <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center mb-3`}>

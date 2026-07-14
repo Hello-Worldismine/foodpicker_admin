@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Eye, CheckCircle, XCircle, Ban } from 'lucide-react';
+import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -17,6 +17,8 @@ import type { Seller, SellerStatus } from '../types';
  * - 승인/반려: PATCH /api/admin/sellers/:id/approval  { approvalStatus: 'approved'|'pending'|'rejected', rejectReason? }
  * - 이용정지/해제: PATCH /api/admin/sellers/:id/pause  { isSellingPaused: boolean, reason? }  (DB의 stores.is_selling_paused)
  * - 수수료율 변경: PATCH /api/admin/sellers/:id/commission  { commissionRate: number }  (stores.commission_rate, 판매자는 수정 불가 — 관리자 전용 컬럼)
+ * - 사업자등록증 다운로드: bizCertImage는 실제로는 Supabase Storage에 업로드된 파일의 signed URL(만료시간 있는 임시 URL)이어야 함.
+ *   퍼블릭 URL로 영구 노출하지 말 것 — 다운로드 버튼 클릭 시점에 GET /api/admin/sellers/:id/biz-cert 로 signed URL을 새로 발급받는 방식을 권장.
  * ⚠️ 보안: residentNumberMasked(주민번호)는 반드시 마스킹된 값만 API 응답에 포함할 것. 평문 주민번호/전체 사업자 서류는 별도 권한 체크 후에만 조회.
  */
 const STATUS_OPTIONS: SellerStatus[] = ['승인대기', '승인완료', '반려', '이용정지'];
@@ -234,6 +236,26 @@ export default function SellerManagement() {
                     </div>
                   ))}
                 </div>
+              </section>
+
+              <section>
+                <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">사업자등록증</p>
+                {selected.bizCertImage ? (
+                  <a
+                    href={selected.bizCertImage}
+                    download={`${selected.storeName}_사업자등록증.svg`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-sm"
+                  >
+                    <Download size={14} /> 사업자등록증 다운로드
+                  </a>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-warm-orange bg-orange-50 rounded-lg p-3">
+                    <FileWarning size={15} className="flex-shrink-0" />
+                    제출된 사업자등록증이 없습니다.
+                  </div>
+                )}
               </section>
 
               <section>

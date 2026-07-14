@@ -61,6 +61,11 @@ export default function SettlementManagement() {
     alert('정산이 확정되었습니다. (로그 기록됨)');
   };
 
+  const handleUnconfirm = (s: Settlement) => {
+    if (!confirm(`${s.sellerName}의 정산 확정을 취소하고 "정산예정" 상태로 되돌리시겠습니까?`)) return;
+    updateStatus(s.id, '정산예정');
+  };
+
   const handleHold = () => {
     if (!selected || !holdReason.trim()) return alert('보류 사유를 선택/입력하세요.');
     updateStatus(selected.id, '보류', holdReason);
@@ -182,22 +187,27 @@ export default function SettlementManagement() {
                     <td className="px-4 py-3 text-gray-500 text-xs">{s.scheduledDate}</td>
                     <td className="px-4 py-3">
                       {s.status === '정산예정' && (
-                        <div className="flex gap-1">
-                          <button onClick={e => { e.stopPropagation(); handleConfirm(s); }} className="text-xs text-primary hover:underline flex items-center gap-0.5">
+                        <div className="flex flex-wrap gap-1.5">
+                          <button onClick={e => { e.stopPropagation(); handleConfirm(s); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-primary text-white hover:bg-primary-dark transition-colors">
                             <CheckCircle size={12} /> 확정
                           </button>
-                          <button onClick={e => { e.stopPropagation(); setSelected(s); setHoldModal(true); }} className="text-xs text-warm-orange hover:underline flex items-center gap-0.5 ml-1">
+                          <button onClick={e => { e.stopPropagation(); setSelected(s); setHoldModal(true); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-warm-orange hover:bg-warm-orange hover:text-white transition-colors">
                             <Pause size={12} /> 보류
                           </button>
                         </div>
                       )}
                       {s.status === '보류' && (
-                        <button onClick={e => { e.stopPropagation(); updateStatus(s.id, '정산예정'); }} className="text-xs text-primary hover:underline flex items-center gap-0.5">
+                        <button onClick={e => { e.stopPropagation(); updateStatus(s.id, '정산예정'); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-primary text-white hover:bg-primary-dark transition-colors">
                           <RotateCcw size={12} /> 보류 해제
                         </button>
                       )}
                       {s.status === '정산완료' && (
-                        <span className="text-xs text-gray-300">처리완료</span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs text-gray-400 whitespace-nowrap">처리완료</span>
+                          <button onClick={e => { e.stopPropagation(); handleUnconfirm(s); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+                            <RotateCcw size={12} /> 취소
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -235,8 +245,13 @@ export default function SettlementManagement() {
                 </button>
               )}
               {selected.status === '정산완료' && (
-                <div className="bg-primary-light text-primary text-xs font-medium rounded-lg py-2 flex items-center justify-center gap-1">
-                  <CheckCircle size={13} /> 정산 처리완료
+                <div className="flex gap-2">
+                  <div className="flex-1 bg-primary-light text-primary text-xs font-medium rounded-lg py-2 flex items-center justify-center gap-1">
+                    <CheckCircle size={13} /> 정산 처리완료
+                  </div>
+                  <button onClick={() => handleUnconfirm(selected)} className="btn-secondary text-xs flex items-center justify-center gap-1 px-3 whitespace-nowrap">
+                    <RotateCcw size={13} /> 확정 취소
+                  </button>
                 </div>
               )}
 

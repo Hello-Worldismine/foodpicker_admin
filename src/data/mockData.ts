@@ -14,15 +14,31 @@ import type {
  * 연동 시에는 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 환경변수 기반 클라이언트를 새로 만들고
  * (판매자 앱의 src/lib/supabase.js, src/lib/api.js 패턴 참고), 이 mock 배열들을 실제 fetch 함수로 교체하면 됨.
  */
+// 목데이터 전용 placeholder 이미지(실 업로드 파일이 없으므로 SVG를 데이터 URI로 즉석 생성).
+// 실 연동 시에는 storage(Supabase Storage 등)에 업로드된 실제 파일 URL로 대체된다.
+function bizCertPlaceholder(storeName: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="594" viewBox="0 0 420 594">
+    <rect width="420" height="594" fill="#fff" stroke="#d1d5db" stroke-width="2"/>
+    <rect x="24" y="24" width="372" height="56" fill="#22A06B"/>
+    <text x="210" y="60" font-family="sans-serif" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">사업자등록증</text>
+    <text x="210" y="140" font-family="sans-serif" font-size="16" fill="#1F2933" text-anchor="middle">상호: ${storeName}</text>
+    <line x1="60" y1="190" x2="360" y2="190" stroke="#e5e7eb" stroke-width="1"/>
+    <line x1="60" y1="230" x2="360" y2="230" stroke="#e5e7eb" stroke-width="1"/>
+    <line x1="60" y1="270" x2="360" y2="270" stroke="#e5e7eb" stroke-width="1"/>
+    <text x="210" y="560" font-family="sans-serif" font-size="12" fill="#9ca3af" text-anchor="middle">(목데이터 샘플 이미지)</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export const mockSellers: Seller[] = [
-  { id: 's1', storeName: '베이커리 달콤', ownerName: '김민준', bizNumber: '123-45-67890', residentNumberMasked: '901231-1******', region: '서울 강남', status: '승인완료', commissionRate: 10, joinDate: '2024-03-15', totalOrders: 342, reportCount: 1, phone: '010-1234-5678', email: 'dalcom@email.com', address: '서울 강남구 테헤란로 123', bankName: '신한은행', accountNumber: '110-123-456789', accountHolder: '김민준', categoryMain: '빵', memo: '' },
-  { id: 's2', storeName: '신선도시락', ownerName: '이수연', bizNumber: '234-56-78901', residentNumberMasked: '880604-2******', region: '서울 마포', status: '승인완료', commissionRate: 10, joinDate: '2024-04-02', totalOrders: 215, reportCount: 0, phone: '010-2345-6789', email: 'fresh@email.com', address: '서울 마포구 합정로 45', bankName: '국민은행', accountNumber: '120-234-567890', accountHolder: '이수연', categoryMain: '도시락', memo: '' },
-  { id: 's3', storeName: '건강샐러드', ownerName: '박지훈', bizNumber: '345-67-89012', residentNumberMasked: '920815-1******', region: '서울 서초', status: '승인대기', commissionRate: 10, joinDate: '2024-06-10', totalOrders: 0, reportCount: 0, phone: '010-3456-7890', email: 'salad@email.com', address: '서울 서초구 강남대로 78', bankName: '우리은행', accountNumber: '130-345-678901', accountHolder: '박지훈', categoryMain: '샐러드', memo: '', bizCertImage: '' },
-  { id: 's4', storeName: '맛있는반찬', ownerName: '최은지', bizNumber: '456-78-90123', residentNumberMasked: '850227-2******', region: '경기 성남', status: '이용정지', commissionRate: 10, joinDate: '2024-01-20', totalOrders: 89, reportCount: 7, phone: '010-4567-8901', email: 'banchan@email.com', address: '경기 성남시 분당구 판교로 56', bankName: '하나은행', accountNumber: '140-456-789012', accountHolder: '최은지', categoryMain: '반찬', memo: '신고 누적으로 이용정지' },
-  { id: 's5', storeName: '카페 디저트', ownerName: '정우성', bizNumber: '567-89-01234', residentNumberMasked: '910109-1******', region: '서울 홍대', status: '반려', commissionRate: 10, joinDate: '2024-05-30', totalOrders: 0, reportCount: 0, phone: '010-5678-9012', email: 'dessert@email.com', address: '서울 마포구 와우산로 99', bankName: '신한은행', accountNumber: '150-567-890123', accountHolder: '정우성', categoryMain: '디저트', memo: '사업자등록증 정보 불명확', bizCertImage: '' },
-  { id: 's6', storeName: '과일음료', ownerName: '한소희', bizNumber: '678-90-12345', residentNumberMasked: '930402-2******', region: '서울 강동', status: '승인완료', commissionRate: 8, joinDate: '2024-02-28', totalOrders: 456, reportCount: 2, phone: '010-6789-0123', email: 'juice@email.com', address: '서울 강동구 천호대로 200', bankName: '농협은행', accountNumber: '160-678-901234', accountHolder: '한소희', categoryMain: '음료', memo: '' },
+  { id: 's1', storeName: '베이커리 달콤', ownerName: '김민준', bizNumber: '123-45-67890', residentNumberMasked: '901231-1******', region: '서울 강남', status: '승인완료', commissionRate: 10, joinDate: '2024-03-15', totalOrders: 342, reportCount: 1, phone: '010-1234-5678', email: 'dalcom@email.com', address: '서울 강남구 테헤란로 123', bankName: '신한은행', accountNumber: '110-123-456789', accountHolder: '김민준', categoryMain: '빵', memo: '', bizCertImage: bizCertPlaceholder('베이커리 달콤') },
+  { id: 's2', storeName: '신선도시락', ownerName: '이수연', bizNumber: '234-56-78901', residentNumberMasked: '880604-2******', region: '서울 마포', status: '승인완료', commissionRate: 10, joinDate: '2024-04-02', totalOrders: 215, reportCount: 0, phone: '010-2345-6789', email: 'fresh@email.com', address: '서울 마포구 합정로 45', bankName: '국민은행', accountNumber: '120-234-567890', accountHolder: '이수연', categoryMain: '도시락', memo: '', bizCertImage: bizCertPlaceholder('신선도시락') },
+  { id: 's3', storeName: '건강샐러드', ownerName: '박지훈', bizNumber: '345-67-89012', residentNumberMasked: '920815-1******', region: '서울 서초', status: '승인대기', commissionRate: 10, joinDate: '2024-06-10', totalOrders: 0, reportCount: 0, phone: '010-3456-7890', email: 'salad@email.com', address: '서울 서초구 강남대로 78', bankName: '우리은행', accountNumber: '130-345-678901', accountHolder: '박지훈', categoryMain: '샐러드', memo: '', bizCertImage: bizCertPlaceholder('건강샐러드') },
+  { id: 's4', storeName: '맛있는반찬', ownerName: '최은지', bizNumber: '456-78-90123', residentNumberMasked: '850227-2******', region: '경기 성남', status: '이용정지', commissionRate: 10, joinDate: '2024-01-20', totalOrders: 89, reportCount: 7, phone: '010-4567-8901', email: 'banchan@email.com', address: '경기 성남시 분당구 판교로 56', bankName: '하나은행', accountNumber: '140-456-789012', accountHolder: '최은지', categoryMain: '반찬', memo: '신고 누적으로 이용정지', bizCertImage: bizCertPlaceholder('맛있는반찬') },
+  { id: 's5', storeName: '카페 디저트', ownerName: '정우성', bizNumber: '567-89-01234', residentNumberMasked: '910109-1******', region: '서울 홍대', status: '반려', commissionRate: 10, joinDate: '2024-05-30', totalOrders: 0, reportCount: 0, phone: '010-5678-9012', email: 'dessert@email.com', address: '서울 마포구 와우산로 99', bankName: '신한은행', accountNumber: '150-567-890123', accountHolder: '정우성', categoryMain: '디저트', memo: '사업자등록증 정보 불명확' },
+  { id: 's6', storeName: '과일음료', ownerName: '한소희', bizNumber: '678-90-12345', residentNumberMasked: '930402-2******', region: '서울 강동', status: '승인완료', commissionRate: 8, joinDate: '2024-02-28', totalOrders: 456, reportCount: 2, phone: '010-6789-0123', email: 'juice@email.com', address: '서울 강동구 천호대로 200', bankName: '농협은행', accountNumber: '160-678-901234', accountHolder: '한소희', categoryMain: '음료', memo: '', bizCertImage: bizCertPlaceholder('과일음료') },
   { id: 's7', storeName: '전통분식', ownerName: '오민석', bizNumber: '789-01-23456', residentNumberMasked: '870718-1******', region: '경기 수원', status: '승인대기', commissionRate: 10, joinDate: '2024-06-12', totalOrders: 0, reportCount: 0, phone: '010-7890-1234', email: 'bunsik@email.com', address: '경기 수원시 영통구 광교로 33', bankName: '기업은행', accountNumber: '170-789-012345', accountHolder: '오민석', categoryMain: '기타', memo: '' },
-  { id: 's8', storeName: '웰빙도시락', ownerName: '송지은', bizNumber: '890-12-34567', residentNumberMasked: '940523-2******', region: '인천 연수', status: '승인완료', commissionRate: 10, joinDate: '2024-03-05', totalOrders: 178, reportCount: 0, phone: '010-8901-2345', email: 'wellbeing@email.com', address: '인천 연수구 컨벤시아대로 100', bankName: '카카오뱅크', accountNumber: '3333-01-1234567', accountHolder: '송지은', categoryMain: '도시락', memo: '' },
+  { id: 's8', storeName: '웰빙도시락', ownerName: '송지은', bizNumber: '890-12-34567', residentNumberMasked: '940523-2******', region: '인천 연수', status: '승인완료', commissionRate: 10, joinDate: '2024-03-05', totalOrders: 178, reportCount: 0, phone: '010-8901-2345', email: 'wellbeing@email.com', address: '인천 연수구 컨벤시아대로 100', bankName: '카카오뱅크', accountNumber: '3333-01-1234567', accountHolder: '송지은', categoryMain: '도시락', memo: '', bizCertImage: bizCertPlaceholder('웰빙도시락') },
 ];
 
 export const mockProducts: Product[] = [
@@ -55,17 +71,42 @@ export const mockSettlements: Settlement[] = [
   { id: 'set5', sellerName: '웰빙도시락', sellerId: 's8', bizNumber: '890-12-34567', period: '2024-06-01 ~ 2024-06-15', totalSales: 153600, platformFee: 12288, pgFee: 3072, commission: 15360, refundAmount: 0, finalAmount: 138240, status: '정산완료', scheduledDate: '2024-06-20', bankName: '카카오뱅크', accountNumber: '3333-01-1234567', accountHolder: '송지은', memo: '' },
 ];
 
+// 목데이터 전용 증빙 사진 placeholder(실 업로드 파일이 없으므로 SVG를 데이터 URI로 즉석 생성).
+function evidencePhotoPlaceholder(emoji: string, bg: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+    <rect width="300" height="300" fill="${bg}"/>
+    <text x="150" y="180" font-size="110" text-anchor="middle">${emoji}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export const mockReports: Report[] = [
-  { id: 'r1', receiptNumber: 'RPT-2406-001', type: '상품 상태가 설명과 달라요', orderNumber: 'FP-1004', buyerName: '박민수', sellerName: '카페 디저트', title: '케이크 상태가 사진과 달랐어요', content: '주문한 케이크가 사진과 전혀 달랐습니다. 크림이 다 녹아있었고 모양도 달랐어요.', status: '확인중', receivedAt: '2024-06-15 19:30', manager: '김관리', memo: '' },
-  { id: 'r2', receiptNumber: 'RPT-2406-002', type: '소비기한이 지났어요', orderNumber: 'FP-0989', buyerName: '이영희', sellerName: '맛있는반찬', title: '소비기한이 이미 지난 상품을 팔았어요', content: '구매한 반찬에 소비기한이 이미 지나있었습니다.', status: '환불 처리', receivedAt: '2024-06-14 21:00', manager: '이운영', memo: '환불 처리 완료' },
+  { id: 'r1', receiptNumber: 'RPT-2406-001', type: '상품 상태가 설명과 달라요', orderNumber: 'FP-1004', buyerName: '박민수', sellerName: '카페 디저트', title: '케이크 상태가 사진과 달랐어요', content: '주문한 케이크가 사진과 전혀 달랐습니다. 크림이 다 녹아있었고 모양도 달랐어요.', evidence: [
+    { type: 'image', url: evidencePhotoPlaceholder('🍰', '#F3E8E8') },
+    { type: 'image', url: evidencePhotoPlaceholder('😖', '#FDECEC') },
+    { type: 'video', url: evidencePhotoPlaceholder('🎬', '#E8ECF3') },
+  ], status: '확인중', receivedAt: '2024-06-15 19:30', manager: '김관리', memo: '' },
+  { id: 'r2', receiptNumber: 'RPT-2406-002', type: '소비기한이 지났어요', orderNumber: 'FP-0989', buyerName: '이영희', sellerName: '맛있는반찬', title: '소비기한이 이미 지난 상품을 팔았어요', content: '구매한 반찬에 소비기한이 이미 지나있었습니다.', evidence: [
+    { type: 'image', url: evidencePhotoPlaceholder('🥘', '#F3E8E8') },
+    { type: 'image', url: evidencePhotoPlaceholder('📅', '#FDF3E7') },
+  ], status: '환불 처리', receivedAt: '2024-06-14 21:00', manager: '이운영', memo: '환불 처리 완료' },
   { id: 'r3', receiptNumber: 'RPT-2406-003', type: '결제/환불 문제가 있어요', orderNumber: 'FP-1003', buyerName: '이영희', sellerName: '과일음료', title: '취소 후 환불이 안 돼요', content: '주문 취소를 했는데 환불이 아직 안 됐습니다.', status: '판매자 답변 대기', receivedAt: '2024-06-15 16:00', manager: '김관리', memo: '' },
   { id: 'r4', receiptNumber: 'RPT-2406-004', type: '매장이 픽업을 거부했어요', orderNumber: 'FP-1007', buyerName: '한예슬', sellerName: '신선도시락', title: '픽업하러 갔는데 매장이 닫혀있었어요', content: '픽업 시간에 맞춰 갔는데 매장 문이 닫혀있었습니다.', status: '접수', receivedAt: '2024-06-15 18:30', manager: '미배정', memo: '' },
 ];
 
+// 목데이터 전용 리뷰 사진 placeholder(실 업로드 파일이 없으므로 SVG를 데이터 URI로 즉석 생성).
+function reviewPhotoPlaceholder(emoji: string, bg: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+    <rect width="300" height="300" fill="${bg}"/>
+    <text x="150" y="180" font-size="110" text-anchor="middle">${emoji}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export const mockReviews: Review[] = [
-  { id: 'rv1', productName: '당일 소화 바게트', storeName: '베이커리 달콤', buyerName: '홍길동', rating: 5, content: '정말 신선하고 맛있었어요! 가성비도 최고입니다.', writtenAt: '2024-06-15 20:15', reportCount: 0, status: '정상', ownerReply: '맛있게 드셨다니 감사합니다! 또 방문해주세요 :)', ownerRepliedAt: '2024-06-15 21:00' },
+  { id: 'rv1', productName: '당일 소화 바게트', storeName: '베이커리 달콤', buyerName: '홍길동', rating: 5, content: '정말 신선하고 맛있었어요! 가성비도 최고입니다.', images: [reviewPhotoPlaceholder('🥖', '#FDF3E7')], writtenAt: '2024-06-15 20:15', reportCount: 0, status: '정상', ownerReply: '맛있게 드셨다니 감사합니다! 또 방문해주세요 :)', ownerRepliedAt: '2024-06-15 21:00' },
   { id: 'rv2', productName: '오늘의 도시락 세트', storeName: '신선도시락', buyerName: '김철수', rating: 4, content: '도시락이 맛있고 양도 충분했어요.', writtenAt: '2024-06-14 19:30', reportCount: 0, status: '정상' },
-  { id: 'rv3', productName: '오늘의 반찬 3종', storeName: '맛있는반찬', buyerName: '오세진', rating: 1, content: '상품이 설명과 달랐고 소비기한도 지나있었어요. 절대 추천 안 합니다.', writtenAt: '2024-06-14 22:00', reportCount: 3, status: '신고검토' },
+  { id: 'rv3', productName: '오늘의 반찬 3종', storeName: '맛있는반찬', buyerName: '오세진', rating: 1, content: '상품이 설명과 달랐고 소비기한도 지나있었어요. 절대 추천 안 합니다.', images: [reviewPhotoPlaceholder('🥘', '#F3E8E8'), reviewPhotoPlaceholder('⏰', '#FDECEC')], writtenAt: '2024-06-14 22:00', reportCount: 3, status: '신고검토' },
   { id: 'rv4', productName: '착즙 오렌지 주스 2팩', storeName: '과일음료', buyerName: '정대호', rating: 5, content: '신선하고 맛있는 주스! 꼭 다시 살 거예요.', writtenAt: '2024-06-13 14:00', reportCount: 0, status: '정상' },
 ];
 

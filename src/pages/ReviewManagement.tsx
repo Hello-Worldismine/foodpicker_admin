@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Star } from 'lucide-react';
+import { Search, Star, ImageIcon } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
@@ -18,6 +18,8 @@ const PAGE_SIZE = 7;
  * - ownerReply/ownerRepliedAt은 실 DB 컬럼(owner_reply, owner_replied_at)이 그대로 존재하므로 조회만 하면 됨.
  * ⚠️ status(정상/숨김/신고검토/삭제) 모더레이션 상태와 reportCount(신고수)는 실 DB `reviews` 테이블에 대응 컬럼이 없음.
  *    실 연동 전 백엔드에서 컬럼 추가(예: moderation_status, report_count) 또는 별도 review_reports 테이블 설계가 선행되어야 함.
+ * ⚠️ images(리뷰 사진)도 실 DB에 컬럼이 없음 — 사용자 앱에서 첨부 업로드를 지원하려면 reviews.images(text[]) 컬럼 추가 +
+ *    Supabase Storage 버킷 연동이 선행되어야 함. 관리자는 신고 처리 시 증빙 사진 확인 용도로 조회만 하면 된다.
  */
 
 function Stars({ rating }: { rating: number }) {
@@ -65,6 +67,7 @@ export default function ReviewManagement() {
           '구매자': r.buyerName,
           '별점': r.rating,
           '리뷰내용': r.content,
+          '첨부사진 수': r.images?.length ?? 0,
           '작성일': r.writtenAt,
           '신고수': r.reportCount,
           '상태': r.status,
@@ -101,14 +104,14 @@ export default function ReviewManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['상품명', '매장명', '구매자', '별점', '작성일', '신고수', '상태', '답글', '관리'].map(h => (
+                  {['상품명', '매장명', '구매자', '별점', '사진', '작성일', '신고수', '상태', '답글', '관리'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
-                  <tr><td colSpan={9}><EmptyState /></td></tr>
+                  <tr><td colSpan={10}><EmptyState /></td></tr>
                 ) : paginated.map(r => (
                   <tr
                     key={r.id}
@@ -119,6 +122,15 @@ export default function ReviewManagement() {
                     <td className="px-4 py-3 text-gray-600">{r.storeName}</td>
                     <td className="px-4 py-3">{r.buyerName}</td>
                     <td className="px-4 py-3"><Stars rating={r.rating} /></td>
+                    <td className="px-4 py-3">
+                      {r.images && r.images.length > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-primary bg-primary-light rounded-full px-2 py-0.5">
+                          <ImageIcon size={12} /> {r.images.length}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-xs">-</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs text-gray-400">{r.writtenAt.slice(0, 10)}</td>
                     <td className="px-4 py-3"><span className={r.reportCount > 0 ? 'text-alert-red font-semibold' : 'text-gray-600'}>{r.reportCount}</span></td>
                     <td className="px-4 py-3"><Badge type="review">{r.status}</Badge></td>
@@ -161,6 +173,19 @@ export default function ReviewManagement() {
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">리뷰 내용</p>
                 <p className="text-sm text-charcoal bg-soft-gray rounded-lg p-3">{selected.content}</p>
               </section>
+
+              {selected.images && selected.images.length > 0 && (
+                <section>
+                  <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">첨부 사진 ({selected.images.length})</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {selected.images.map((src, i) => (
+                      <a key={i} href={src} target="_blank" rel="noreferrer" className="block aspect-square rounded-lg overflow-hidden border border-gray-100 hover:opacity-80 transition-opacity">
+                        <img src={src} alt={`리뷰 첨부 사진 ${i + 1}`} className="w-full h-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {selected.ownerReply && (
                 <section>
