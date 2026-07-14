@@ -189,12 +189,19 @@ export interface Category {
   order: number;
 }
 
+// 쿠폰 예산 부담 주체 — 정산 배치가 이 값을 보고 할인액을 본사/점주 중 누구 정산에서 차감할지 결정한다.
+export type CouponCostBearer = '본사' | '점주' | '분담';
+// 쿠폰을 누가 만들었는지: 관리자가 직접 발행했는지, 점주가 신청해서 관리자 승인을 거쳤는지.
+export type CouponSource = '관리자 발행' | '점주 신청';
+export type CouponRequestStatus = '대기' | '승인' | '반려';
+
 export interface Coupon {
   id: string;
   code: string; // 사용자가 앱에서 직접 입력해 등록하는 쿠폰번호
   name: string;
   discountType: '정액' | '정률';
   discountValue: number;
+  maxDiscountAmount?: number; // 정률 할인일 때 필수 — 이 금액을 넘는 할인은 적용되지 않음(플랫폼 예산 보호)
   minOrderAmount: number;
   startDate: string;
   endDate: string;
@@ -202,6 +209,14 @@ export interface Coupon {
   totalQuantity: number;
   usedQuantity: number;
   active: boolean;
+  costBearer: CouponCostBearer; // 예산 부담 주체(정산 연동 핵심 필드)
+  platformShare?: number; // costBearer가 '분담'일 때 본사 부담 비율(%). 나머지는 점주 부담.
+  allowStacking: boolean; // 다른 쿠폰과 중복 사용 허용 여부
+  source: CouponSource;
+  sellerId?: string; // 점주 신청 쿠폰인 경우 신청한 매장
+  sellerName?: string;
+  requestStatus?: CouponRequestStatus; // source가 '점주 신청'일 때만 사용, 관리자 발행은 항상 승인된 것으로 간주
+  rejectReason?: string;
 }
 
 export interface AdminAccount {

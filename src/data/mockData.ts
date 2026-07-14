@@ -133,8 +133,11 @@ export const mockCategories: Category[] = [
 ];
 
 export const mockCoupons: Coupon[] = [
-  { id: 'cp1', code: 'WELCOME1000', name: '신규 가입 할인', discountType: '정액', discountValue: 1000, minOrderAmount: 3000, startDate: '2024-06-01', endDate: '2024-12-31', target: '신규 회원', totalQuantity: 1000, usedQuantity: 342, active: true },
-  { id: 'cp2', code: 'ECOHERO10', name: '환경 챔피언 쿠폰', discountType: '정률', discountValue: 10, minOrderAmount: 5000, startDate: '2024-06-01', endDate: '2024-06-30', target: '전체', totalQuantity: 500, usedQuantity: 128, active: true },
+  { id: 'cp1', code: 'WELCOME1000', name: '신규 가입 할인', discountType: '정액', discountValue: 1000, minOrderAmount: 3000, startDate: '2024-06-01', endDate: '2024-12-31', target: '신규 회원', totalQuantity: 1000, usedQuantity: 342, active: true, costBearer: '본사', allowStacking: true, source: '관리자 발행' },
+  { id: 'cp2', code: 'ECOHERO10', name: '환경 챔피언 쿠폰', discountType: '정률', discountValue: 10, maxDiscountAmount: 3000, minOrderAmount: 5000, startDate: '2024-06-01', endDate: '2024-06-30', target: '전체', totalQuantity: 500, usedQuantity: 128, active: true, costBearer: '분담', platformShare: 50, allowStacking: false, source: '관리자 발행' },
+  // 점주가 직접 신청한 쿠폰 — 예산 100% 점주 부담, 관리자 승인 대기 중
+  { id: 'cp3', code: 'BANCHAN20', name: '맛있는반찬 단골 할인', discountType: '정률', discountValue: 20, maxDiscountAmount: 4000, minOrderAmount: 10000, startDate: '2024-07-01', endDate: '2024-07-31', target: '해당 매장', totalQuantity: 200, usedQuantity: 0, active: false, costBearer: '점주', allowStacking: false, source: '점주 신청', sellerId: 's4', sellerName: '맛있는반찬', requestStatus: '대기' },
+  { id: 'cp4', code: 'DALCOM1500', name: '베이커리 달콤 오픈 기념', discountType: '정액', discountValue: 1500, minOrderAmount: 5000, startDate: '2024-07-05', endDate: '2024-07-20', target: '해당 매장', totalQuantity: 100, usedQuantity: 0, active: false, costBearer: '점주', allowStacking: true, source: '점주 신청', sellerId: 's1', sellerName: '베이커리 달콤', requestStatus: '대기' },
 ];
 
 export const mockAdmins: AdminAccount[] = [
