@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Edit2 } from 'lucide-react';
 import Modal from '../components/ui/Modal';
+import Switch from '../components/ui/Switch';
 import { mockBanners, mockNotices } from '../data/mockData';
 import type { Banner, Notice } from '../types';
 
@@ -76,9 +77,11 @@ export default function BannerManagement() {
                   <p className="text-xs text-gray-400">{b.position} · {b.startDate} ~ {b.endDate}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button onClick={() => setBanners(prev => prev.map(x => x.id === b.id ? { ...x, active: !x.active } : x))}>
-                    {b.active ? <ToggleRight size={24} className="text-primary" /> : <ToggleLeft size={24} className="text-gray-300" />}
-                  </button>
+                  <Switch
+                    checked={b.active}
+                    onChange={() => setBanners(prev => prev.map(x => x.id === b.id ? { ...x, active: !x.active } : x))}
+                    label={`${b.title} 활성화 여부`}
+                  />
                   <button onClick={() => { setEditBanner(b); setBForm({ title: b.title, link: b.link, position: b.position, startDate: b.startDate, endDate: b.endDate }); setBannerModal(true); }} className="text-gray-400 hover:text-primary">
                     <Edit2 size={16} />
                   </button>
@@ -105,9 +108,11 @@ export default function BannerManagement() {
                   <p className="text-xs text-gray-400">{n.startDate} ~ {n.endDate}</p>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <button onClick={() => setNotices(prev => prev.map(x => x.id === n.id ? { ...x, active: !x.active } : x))}>
-                    {n.active ? <ToggleRight size={24} className="text-primary" /> : <ToggleLeft size={24} className="text-gray-300" />}
-                  </button>
+                  <Switch
+                    checked={n.active}
+                    onChange={() => setNotices(prev => prev.map(x => x.id === n.id ? { ...x, active: !x.active } : x))}
+                    label={`${n.title} 활성화 여부`}
+                  />
                   <button onClick={() => { setEditNotice(n); setNForm({ title: n.title, content: n.content, target: n.target, startDate: n.startDate, endDate: n.endDate, important: n.important }); setNoticeModal(true); }} className="text-gray-400 hover:text-primary">
                     <Edit2 size={16} />
                   </button>

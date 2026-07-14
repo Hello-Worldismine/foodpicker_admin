@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Save, Download } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
+import Switch from '../components/ui/Switch';
 
 /**
  * [백엔드 연동 안내] settings 상태가 로컬 useState뿐이라 새로고침하면 초기화됨 — 저장할 DB 테이블이 없음(신규 설계 필요).
@@ -75,11 +76,11 @@ export default function Settings() {
               <p className="text-sm font-medium text-charcoal">소비기한 자동 판매종료</p>
               <p className="text-xs text-gray-400">소비기한 경과 상품 자동 판매종료 처리</p>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" checked={settings.autoExpireCheck} onChange={e => setSettings({ ...settings, autoExpireCheck: e.target.checked })} className="sr-only peer" />
-              <div className="w-10 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:bg-primary transition-colors" />
-              <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
-            </label>
+            <Switch
+              checked={settings.autoExpireCheck}
+              onChange={() => setSettings({ ...settings, autoExpireCheck: !settings.autoExpireCheck })}
+              label="소비기한 자동 판매종료"
+            />
           </div>
 
           <div>

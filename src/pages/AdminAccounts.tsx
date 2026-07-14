@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Edit2 } from 'lucide-react';
 import Modal from '../components/ui/Modal';
+import Switch from '../components/ui/Switch';
 import { mockAdmins } from '../data/mockData';
 import type { AdminAccount, AdminRole } from '../types';
 
@@ -96,9 +97,7 @@ export default function AdminAccounts() {
                       <button onClick={() => openEdit(a)} className="text-gray-400 hover:text-primary transition-colors">
                         <Edit2 size={14} />
                       </button>
-                      <button onClick={() => toggle(a.id)}>
-                        {a.status === '활성' ? <ToggleRight size={20} className="text-primary" /> : <ToggleLeft size={20} className="text-gray-300" />}
-                      </button>
+                      <Switch size="sm" checked={a.status === '활성'} onChange={() => toggle(a.id)} label={`${a.name} 활성화 여부`} />
                     </div>
                   </td>
                 </tr>

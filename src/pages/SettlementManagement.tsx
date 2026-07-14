@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, CheckCircle, Pause } from 'lucide-react';
+import { Search, CheckCircle, Pause, RotateCcw } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -181,18 +181,24 @@ export default function SettlementManagement() {
                     <td className="px-4 py-3"><Badge type="settlement">{s.status}</Badge></td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{s.scheduledDate}</td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {s.status !== '정산완료' && s.status !== '보류' && (
+                      {s.status === '정산예정' && (
+                        <div className="flex gap-1">
                           <button onClick={e => { e.stopPropagation(); handleConfirm(s); }} className="text-xs text-primary hover:underline flex items-center gap-0.5">
                             <CheckCircle size={12} /> 확정
                           </button>
-                        )}
-                        {s.status !== '보류' && (
-                          <button onClick={e => { e.stopPropagation(); setSelected(s); setHoldModal(true); }} className="text-xs text-warn-orange hover:underline flex items-center gap-0.5 ml-1">
+                          <button onClick={e => { e.stopPropagation(); setSelected(s); setHoldModal(true); }} className="text-xs text-warm-orange hover:underline flex items-center gap-0.5 ml-1">
                             <Pause size={12} /> 보류
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
+                      {s.status === '보류' && (
+                        <button onClick={e => { e.stopPropagation(); updateStatus(s.id, '정산예정'); }} className="text-xs text-primary hover:underline flex items-center gap-0.5">
+                          <RotateCcw size={12} /> 보류 해제
+                        </button>
+                      )}
+                      {s.status === '정산완료' && (
+                        <span className="text-xs text-gray-300">처리완료</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -213,21 +219,26 @@ export default function SettlementManagement() {
             </div>
             <div className="p-5 space-y-5">
               {/* Actions */}
-              <div className="flex gap-2">
-                {selected.status !== '정산완료' && selected.status !== '보류' && (
+              {selected.status === '정산예정' && (
+                <div className="flex gap-2">
                   <button onClick={() => handleConfirm(selected)} className="btn-primary flex-1 text-xs flex items-center justify-center gap-1">
                     <CheckCircle size={13} /> 정산 확정
                   </button>
-                )}
-                {selected.status !== '보류' && (
                   <button onClick={() => setHoldModal(true)} className="btn-warning flex-1 text-xs flex items-center justify-center gap-1">
                     <Pause size={13} /> 보류
                   </button>
-                )}
-                {selected.status === '보류' && (
-                  <button onClick={() => updateStatus(selected.id, '정산예정')} className="btn-primary flex-1 text-xs">보류 해제</button>
-                )}
-              </div>
+                </div>
+              )}
+              {selected.status === '보류' && (
+                <button onClick={() => updateStatus(selected.id, '정산예정')} className="btn-primary w-full text-xs flex items-center justify-center gap-1">
+                  <RotateCcw size={13} /> 보류 해제
+                </button>
+              )}
+              {selected.status === '정산완료' && (
+                <div className="bg-primary-light text-primary text-xs font-medium rounded-lg py-2 flex items-center justify-center gap-1">
+                  <CheckCircle size={13} /> 정산 처리완료
+                </div>
+              )}
 
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">판매자 정보</p>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Edit2, Trash2, ToggleLeft, ToggleRight, GripVertical } from 'lucide-react';
+import { Plus, Edit2, Trash2, GripVertical } from 'lucide-react';
 import Modal from '../components/ui/Modal';
+import Switch from '../components/ui/Switch';
 import { mockCategories } from '../data/mockData';
 import type { Category } from '../types';
 
@@ -65,9 +66,7 @@ export default function CategoryManagement() {
               </div>
               <span className="text-xs text-gray-400">순서 {idx + 1}</span>
               <div className="flex items-center gap-2">
-                <button onClick={() => toggle(cat.id)}>
-                  {cat.active ? <ToggleRight size={24} className="text-primary" /> : <ToggleLeft size={24} className="text-gray-300" />}
-                </button>
+                <Switch checked={cat.active} onChange={() => toggle(cat.id)} label={`${cat.name} 활성화 여부`} />
                 <button onClick={() => openEdit(cat)} className="text-gray-400 hover:text-primary transition-colors p-1">
                   <Edit2 size={15} />
                 </button>

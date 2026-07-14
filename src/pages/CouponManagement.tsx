@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, ToggleLeft, ToggleRight, Copy, Check } from 'lucide-react';
+import { Plus, Copy, Check } from 'lucide-react';
 import Modal from '../components/ui/Modal';
+import Switch from '../components/ui/Switch';
 import { mockCoupons } from '../data/mockData';
 import type { Coupon } from '../types';
 
@@ -95,9 +96,7 @@ export default function CouponManagement() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <button onClick={() => toggle(c.id)}>
-                      {c.active ? <ToggleRight size={24} className="text-primary" /> : <ToggleLeft size={24} className="text-gray-300" />}
-                    </button>
+                    <Switch checked={c.active} onChange={() => toggle(c.id)} label={`${c.name} 활성화 여부`} />
                   </td>
                   <td className="px-4 py-3">
                     <button className="text-xs text-primary hover:underline" onClick={() => setSelected(c)}>상세</button>
