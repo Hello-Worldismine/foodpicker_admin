@@ -14,6 +14,14 @@ import {
 
 const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'];
 
+/**
+ * [백엔드 연동 안내] statCards/alerts/차트 데이터가 모두 하드코딩된 예시값. 실 연동 시 집계 API 필요:
+ * - GET /api/admin/dashboard/summary → 오늘 거래액/주문수/픽업완료/취소/신규판매자/신고/정산보류 건수 (orders/stores/reports/settlements 집계)
+ * - GET /api/admin/dashboard/daily-orders?days=7 → 일별 주문수/거래액 (차트용)
+ * - GET /api/admin/dashboard/alerts → "운영 주의 알림" 피드(소비기한 임박, 신고 누적 매장, 정산 보류 등 여러 도메인을 조합한 결과이므로
+ *   프론트에서 여러 API를 합치기보다 백엔드에서 하나의 알림 피드로 합쳐 내려주는 것을 권장)
+ * 집계 쿼리는 실시간 계산 비용이 크므로 배치/캐시(예: 5분 주기 머티리얼라이즈드 뷰) 설계를 권장.
+ */
 const statCards = [
   { label: '오늘 거래액', value: '1,284,000원', icon: TrendingUp, color: 'text-primary', bg: 'bg-primary-light', sub: '어제 대비 +12%' },
   { label: '오늘 주문 수', value: '245건', icon: ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50', sub: '어제 대비 +8' },

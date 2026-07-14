@@ -10,7 +10,16 @@ import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockProducts } from '../data/mockData';
 import type { Product, ProductStatus } from '../types';
 
-const STATUS_OPTIONS: ProductStatus[] = ['판매중', '품절', '판매종료', '숨김', '검수대기', '반려', '관리자중지'];
+// 판매자 앱은 상품 등록 즉시 '판매중' 상태로 게시하므로(사전 검수 단계 없음),
+// 실제 product_status enum과 동일한 4개 상태만 관리자가 다룬다.
+/**
+ * [백엔드 연동 안내] 현재 mockProducts(목데이터)로 동작 중. 실 서비스는 Supabase `products` 테이블(판매자 앱과 공유)에 대응됨.
+ * - 목록/검색: GET /api/admin/products?search=&status=&category=&page=
+ * - 숨김/판매중지 처리: PATCH /api/admin/products/:id/status  { status: 'selling'|'soldout'|'paused'|'hidden', pauseReason?: 'expiry'|'manual', rejectReason?: string }
+ * - 판매 재개: PATCH /api/admin/products/:id/status  { status: 'selling' }  (백엔드에서 소비기한(expiryDate) 경과 여부 재검증 필요)
+ * 참고: 자동할인(startPrice/floorPrice/reductionAmount/intervalMinutes)은 판매자 앱이 스케줄링하는 필드로, 관리자는 조회만 하고 수정 API는 불필요.
+ */
+const STATUS_OPTIONS: ProductStatus[] = ['판매중', '품절', '판매중지', '숨김'];
 const CATEGORIES = ['전체', '빵', '도시락', '샐러드', '반찬', '디저트', '음료', '기타'];
 const PAGE_SIZE = 6;
 
@@ -32,7 +41,7 @@ export default function ProductManagement() {
   const [categoryFilter, setCategoryFilter] = useState('전체');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Product | null>(null);
-  const [actionModal, setActionModal] = useState<'reject' | 'stop' | null>(null);
+  const [actionModal, setActionModal] = useState<'hide' | 'stop' | null>(null);
   const [actionReason, setActionReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
 
@@ -69,7 +78,7 @@ export default function ProductManagement() {
           '소비기한': p.expiryDate,
           '픽업시작': p.pickupStart,
           '픽업종료': p.pickupEnd,
-          '보관방법': p.storage,
+          '보관방법': p.storageDetail ? `${p.storage}(${p.storageDetail})` : p.storage,
           '알레르기정보': p.allergyInfo,
           '원산지': p.originInfo,
           '상태': p.status,
@@ -81,18 +90,14 @@ export default function ProductManagement() {
     });
   };
 
-  const updateStatus = (id: string, status: ProductStatus, memo?: string) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, status, memo: memo ?? p.memo } : p));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+  const updateStatus = (id: string, status: ProductStatus, memo?: string, pauseReason?: Product['pauseReason']) => {
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, status, memo: memo ?? p.memo, pauseReason } : p));
+    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status, pauseReason } : null);
   };
 
-  const handleApprove = (product: Product) => {
+  const handleResume = (product: Product) => {
     if (isExpired(product.expiryDate)) {
-      alert('소비기한이 경과된 상품은 승인할 수 없습니다.');
-      return;
-    }
-    if (isPickupAfterExpiry(product.pickupEnd, product.expiryDate, product.registeredAt)) {
-      alert('픽업 종료 시간이 소비기한보다 늦은 상품은 승인할 수 없습니다.');
+      alert('소비기한이 경과된 상품은 판매 재개할 수 없습니다.');
       return;
     }
     updateStatus(product.id, '판매중');
@@ -100,7 +105,11 @@ export default function ProductManagement() {
 
   const handleAction = () => {
     if (!selected || !actionReason.trim()) return alert('사유를 입력해주세요.');
-    updateStatus(selected.id, actionModal === 'reject' ? '반려' : '관리자중지', actionReason);
+    if (actionModal === 'hide') {
+      updateStatus(selected.id, '숨김', actionReason);
+    } else {
+      updateStatus(selected.id, '판매중지', actionReason, '관리자 중지');
+    }
     setActionModal(null);
     setActionReason('');
   };
@@ -206,19 +215,9 @@ export default function ProductManagement() {
 
               {/* Actions */}
               <div className="flex flex-wrap gap-2">
-                {selected.status === '검수대기' && (
-                  <>
-                    <button onClick={() => handleApprove(selected)} className="btn-primary flex-1 flex items-center justify-center gap-1 text-xs">
-                      <CheckCircle size={13} /> 승인
-                    </button>
-                    <button onClick={() => setActionModal('reject')} className="btn-danger flex-1 flex items-center justify-center gap-1 text-xs">
-                      <XCircle size={13} /> 반려
-                    </button>
-                  </>
-                )}
                 {selected.status === '판매중' && (
                   <>
-                    <button onClick={() => updateStatus(selected.id, '숨김')} className="btn-secondary flex-1 flex items-center justify-center gap-1 text-xs">
+                    <button onClick={() => setActionModal('hide')} className="btn-secondary flex-1 flex items-center justify-center gap-1 text-xs">
                       <EyeOff size={13} /> 숨김
                     </button>
                     <button onClick={() => setActionModal('stop')} className="btn-danger flex-1 flex items-center justify-center gap-1 text-xs">
@@ -226,8 +225,8 @@ export default function ProductManagement() {
                     </button>
                   </>
                 )}
-                {(selected.status === '숨김' || selected.status === '관리자중지') && (
-                  <button onClick={() => updateStatus(selected.id, '판매중')} className="btn-primary w-full flex items-center justify-center gap-1 text-xs">
+                {(selected.status === '숨김' || selected.status === '판매중지') && (
+                  <button onClick={() => handleResume(selected)} className="btn-primary w-full flex items-center justify-center gap-1 text-xs">
                     <CheckCircle size={13} /> 판매 재개
                   </button>
                 )}
@@ -260,11 +259,22 @@ export default function ProductManagement() {
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">식품 정보</p>
                 <div className="space-y-2 text-sm">
-                  <div><span className="text-gray-500">보관 방법</span><p className="text-charcoal">{selected.storage}</p></div>
+                  <div><span className="text-gray-500">보관 방법</span><p className="text-charcoal">{selected.storage}{selected.storageDetail ? ` · ${selected.storageDetail}` : ''}</p></div>
                   <div><span className="text-gray-500">알레르기</span><p className="text-charcoal">{selected.allergyInfo || '없음'}</p></div>
                   <div><span className="text-gray-500">원산지</span><p className="text-charcoal">{selected.originInfo}</p></div>
                 </div>
               </section>
+
+              {selected.floorPrice != null && (
+                <section>
+                  <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">자동 할인 설정</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-gray-500">시작가</span><span className="text-charcoal">{selected.startPrice?.toLocaleString()}원</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">최저가</span><span className="text-charcoal">{selected.floorPrice.toLocaleString()}원</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">할인 주기</span><span className="text-charcoal">{selected.intervalMinutes}분마다 {selected.reductionAmount?.toLocaleString()}원씩 인하</span></div>
+                  </div>
+                </section>
+              )}
 
               {selected.description && (
                 <section>
@@ -288,7 +298,7 @@ export default function ProductManagement() {
       <Modal
         open={!!actionModal}
         onClose={() => { setActionModal(null); setActionReason(''); }}
-        title={actionModal === 'reject' ? '반려 사유 입력' : '판매중지 사유 입력'}
+        title={actionModal === 'hide' ? '숨김 사유 입력' : '판매중지 사유 입력'}
       >
         <div className="space-y-3">
           <textarea
@@ -300,7 +310,7 @@ export default function ProductManagement() {
           <div className="flex gap-2">
             <button onClick={() => { setActionModal(null); setActionReason(''); }} className="btn-secondary flex-1">취소</button>
             <button onClick={handleAction} className="btn-danger flex-1">
-              {actionModal === 'reject' ? '반려 처리' : '판매중지'}
+              {actionModal === 'hide' ? '숨김 처리' : '판매중지'}
             </button>
           </div>
         </div>

@@ -1,26 +1,56 @@
 import { useState } from 'react';
-import { Plus, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, ToggleLeft, ToggleRight, Copy, Check } from 'lucide-react';
 import Modal from '../components/ui/Modal';
 import { mockCoupons } from '../data/mockData';
 import type { Coupon } from '../types';
 
+/**
+ * [백엔드 연동 안내] 현재 mockCoupons(목데이터)로 동작 중. 실 DB에는 쿠폰 테이블이 아예 없음(신규 설계 필요).
+ * 제안 스키마: coupons(id, code UNIQUE, name, discount_type, discount_value, min_order_amount,
+ *   start_date, end_date, target, total_quantity, used_quantity, active, created_at)
+ * API 예시:
+ * - GET /api/admin/coupons, POST /api/admin/coupons, PATCH /api/admin/coupons/:id/active
+ * - 사용자 앱에서 쿠폰번호(code)를 입력해 등록/사용 처리하는 엔드포인트가 별도로 필요: POST /api/coupons/redeem { code }
+ *   (동시성 이슈 방지를 위해 used_quantity 증가는 DB 트랜잭션/락으로 처리 필요)
+ * 지금 프론트에서 생성하는 code는 클라이언트 랜덤 생성이라 서버 저장 전까지 중복 가능성이 있음 — 실제로는 서버에서 UNIQUE 제약 + 재시도로 발급해야 함.
+ */
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 export default function CouponManagement() {
   const [coupons, setCoupons] = useState<Coupon[]>(mockCoupons);
   const [modal, setModal] = useState(false);
+  const [selected, setSelected] = useState<Coupon | null>(null);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
-    name: '', discountType: '정액' as '정액' | '정률', discountValue: 0,
+    code: generateCode(), name: '', discountType: '정액' as '정액' | '정률', discountValue: 0,
     minOrderAmount: 0, startDate: '', endDate: '', target: '전체', totalQuantity: 100,
   });
 
   const save = () => {
     if (!form.name.trim()) return alert('쿠폰명을 입력하세요.');
+    if (!form.code.trim()) return alert('쿠폰번호를 입력하세요.');
     setCoupons(prev => [...prev, {
       id: `cp${Date.now()}`, ...form, usedQuantity: 0, active: true
     }]);
     setModal(false);
+    setForm({ code: generateCode(), name: '', discountType: '정액', discountValue: 0, minOrderAmount: 0, startDate: '', endDate: '', target: '전체', totalQuantity: 100 });
   };
 
-  const toggle = (id: string) => setCoupons(prev => prev.map(c => c.id === id ? { ...c, active: !c.active } : c));
+  const toggle = (id: string) => {
+    setCoupons(prev => prev.map(c => c.id === id ? { ...c, active: !c.active } : c));
+    setSelected(prev => prev && prev.id === id ? { ...prev, active: !prev.active } : prev);
+  };
+
+  const copyCode = (code: string) => {
+    navigator.clipboard?.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div className="space-y-4">
@@ -37,7 +67,7 @@ export default function CouponManagement() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-soft-gray/50">
-                {['쿠폰명', '할인 방식', '할인값', '최소주문금액', '기간', '대상', '발급/사용', '상태'].map(h => (
+                {['쿠폰명', '쿠폰번호', '할인 방식', '할인값', '최소주문금액', '기간', '대상', '발급/사용', '상태', '관리'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -46,6 +76,7 @@ export default function CouponManagement() {
               {coupons.map(c => (
                 <tr key={c.id} className={`border-b border-gray-50 ${!c.active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-medium">{c.name}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-primary">{c.code}</td>
                   <td className="px-4 py-3 text-gray-600">{c.discountType} 할인</td>
                   <td className="px-4 py-3 text-primary font-semibold">
                     {c.discountType === '정액' ? `${c.discountValue.toLocaleString()}원` : `${c.discountValue}%`}
@@ -68,6 +99,9 @@ export default function CouponManagement() {
                       {c.active ? <ToggleRight size={24} className="text-primary" /> : <ToggleLeft size={24} className="text-gray-300" />}
                     </button>
                   </td>
+                  <td className="px-4 py-3">
+                    <button className="text-xs text-primary hover:underline" onClick={() => setSelected(c)}>상세</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -75,8 +109,54 @@ export default function CouponManagement() {
         </div>
       </div>
 
+      {/* Detail Modal */}
+      <Modal open={!!selected} onClose={() => setSelected(null)} title="쿠폰 상세">
+        {selected && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs text-gray-500 mb-1">쿠폰번호 (사용자 등록용)</p>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-lg font-bold text-primary bg-primary-light rounded-lg px-3 py-2 flex-1 text-center tracking-wider">{selected.code}</span>
+                <button onClick={() => copyCode(selected.code)} className="btn-secondary flex items-center gap-1 text-xs px-3 py-2">
+                  {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? '복사됨' : '복사'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">사용자가 앱의 쿠폰 등록 화면에 이 번호를 직접 입력해야 발급됩니다.</p>
+            </div>
+
+            <div className="space-y-1.5 text-sm">
+              {[
+                ['쿠폰명', selected.name],
+                ['할인', selected.discountType === '정액' ? `${selected.discountValue.toLocaleString()}원 할인` : `${selected.discountValue}% 할인`],
+                ['최소주문금액', `${selected.minOrderAmount.toLocaleString()}원 이상`],
+                ['대상', selected.target],
+                ['기간', `${selected.startDate} ~ ${selected.endDate}`],
+                ['발급/사용', `${selected.totalQuantity} / ${selected.usedQuantity}`],
+                ['상태', selected.active ? '활성' : '비활성'],
+              ].map(([l, v]) => (
+                <div key={l} className="flex justify-between"><span className="text-gray-500">{l}</span><span className="text-charcoal">{v}</span></div>
+              ))}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => toggle(selected.id)} className="btn-secondary flex-1 text-sm">
+                {selected.active ? '비활성화' : '활성화'}
+              </button>
+              <button onClick={() => setSelected(null)} className="btn-primary flex-1 text-sm">닫기</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={modal} onClose={() => setModal(false)} title="쿠폰 추가" size="lg">
         <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">쿠폰번호 (사용자 등록용)</label>
+            <div className="flex gap-2">
+              <input className="input font-mono flex-1" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} />
+              <button type="button" onClick={() => setForm({ ...form, code: generateCode() })} className="btn-secondary text-xs px-3">재생성</button>
+            </div>
+          </div>
           <div><label className="text-xs text-gray-500 block mb-1">쿠폰명</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs text-gray-500 block mb-1">할인 방식</label>

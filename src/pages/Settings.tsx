@@ -2,6 +2,14 @@ import { useState } from 'react';
 import { Save, Download } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
 
+/**
+ * [백엔드 연동 안내] settings 상태가 로컬 useState뿐이라 새로고침하면 초기화됨 — 저장할 DB 테이블이 없음(신규 설계 필요).
+ * 제안: settings 단일 행 테이블 또는 key-value 형태의 admin_settings(key, value, updated_at) 테이블.
+ * API 예시: GET /api/admin/settings, PUT /api/admin/settings
+ * 여기 설정값(commissionRate 기본값, autoExpireCheck, reportThreshold, maxReportBeforeSuspend, autoPickupTimeout 등)은
+ * 실제로는 판매자 앱/배치 서버 쪽 자동화 로직(소비기한 자동 판매중지, 신고 누적 자동 이용정지 등)의 파라미터이므로
+ * 백엔드 배치 잡과 값이 반드시 동기화되어야 함.
+ */
 export default function Settings() {
   const { downloadLogs } = useAdmin();
   const [settings, setSettings] = useState({

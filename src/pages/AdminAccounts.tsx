@@ -22,6 +22,13 @@ const roleBadge: Record<AdminRole, string> = {
   '읽기전용': 'bg-gray-100 text-gray-600',
 };
 
+/**
+ * [백엔드 연동 안내] 현재 mockAdmins(목데이터)로 동작 중. 실 서비스는 관리자 다단계 권한 모델 자체가 없음(신규 설계 필요).
+ * 현재 판매자 앱 인증은 `auth.users.raw_app_meta_data.role = 'seller'` 정도만 사용하며, admin_accounts 개념이 DB에 없음.
+ * 제안 방향: admin_accounts(id, name, email, role, status) 테이블 + Supabase Auth 연동, role별 RLS/API 접근 제어.
+ * ⚠️ 로그인 화면/인증 로직은 이번 작업 범위에서 의도적으로 제외됨 — 백엔드에서 인증 설계 확정 후 별도로 연동 필요.
+ * API 예시: GET /api/admin/accounts, POST /api/admin/accounts, PATCH /api/admin/accounts/:id (role/status 변경)
+ */
 export default function AdminAccounts() {
   const [admins, setAdmins] = useState<AdminAccount[]>(mockAdmins);
   const [modal, setModal] = useState(false);

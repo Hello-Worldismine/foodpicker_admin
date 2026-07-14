@@ -10,7 +10,16 @@ import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockOrders } from '../data/mockData';
 import type { Order, OrderStatus } from '../types';
 
-const ORDER_STATUSES: OrderStatus[] = ['결제완료', '픽업대기', '픽업완료', '취소요청', '환불완료', '노쇼', '분쟁중'];
+// 실제 DB order_seller_status enum('new'|'confirmed'|'completed'|'cancelled')과 동일한 4개 상태.
+// '노쇼', '분쟁중' 등은 별도 상태로 존재하지 않으며 memo로 기록한다.
+/**
+ * [백엔드 연동 안내] 현재 mockOrders(목데이터)로 동작 중. 실 서비스는 Supabase `orders` 테이블(판매자 앱과 공유)에 대응됨.
+ * - 목록/검색: GET /api/admin/orders?search=&status=&page=
+ * - 주문상태 변경: PATCH /api/admin/orders/:id/seller-status  { sellerStatus: 'new'|'confirmed'|'completed'|'cancelled' }
+ * - 환불 처리: POST /api/admin/orders/:id/refund  → paymentStatus='refunded', sellerStatus='cancelled'로 갱신 (PG 연동 포함, 별도 트랜잭션 필요)
+ * - safeNumber(050 안심번호)는 통신사 연동 결과이므로 관리자는 조회만 하고 발급/해제는 판매자 앱/PG 쪽 로직을 따른다.
+ */
+const ORDER_STATUSES: OrderStatus[] = ['신규접수', '픽업대기', '픽업완료', '취소'];
 const PAGE_SIZE = 7;
 
 export default function OrderManagement() {
@@ -20,7 +29,7 @@ export default function OrderManagement() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Order | null>(null);
   const [statusChangeModal, setStatusChangeModal] = useState(false);
-  const [newStatus, setNewStatus] = useState<OrderStatus>('결제완료');
+  const [newStatus, setNewStatus] = useState<OrderStatus>('신규접수');
   const [changeReason, setChangeReason] = useState('');
   const [refundModal, setRefundModal] = useState(false);
   const { download, isLoading, toast, canDownload } = useExcelDownload();
@@ -50,10 +59,13 @@ export default function OrderManagement() {
           '구매자': o.buyerName,
           '판매자': o.sellerName,
           '상품명': o.productName,
-          '결제금액(원)': o.amount,
+          '상품금액(원)': o.amount,
+          '수수료(원)': o.fee,
+          '결제금액(원)': o.totalPrice,
           '수량': o.quantity,
           '주문상태': o.status,
           '결제상태': o.paymentStatus,
+          '안심번호': o.safeNumber,
           '픽업시간': o.pickupTime,
           '주문일시': o.orderedAt,
         })),
@@ -72,17 +84,10 @@ export default function OrderManagement() {
 
   const handleRefund = () => {
     if (!selected) return;
-    setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: '환불완료', paymentStatus: '환불완료' } : o));
-    setSelected(prev => prev ? { ...prev, status: '환불완료', paymentStatus: '환불완료' } : null);
+    setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: '취소', paymentStatus: '환불완료' } : o));
+    setSelected(prev => prev ? { ...prev, status: '취소', paymentStatus: '환불완료' } : null);
     setRefundModal(false);
     alert('환불 처리가 완료되었습니다. (로그 기록됨)');
-  };
-
-  const statusColor: Record<string, string> = {
-    '결제완료': 'bg-blue-50 text-blue-700',
-    '환불완료': 'bg-gray-100 text-gray-600',
-    '환불대기': 'bg-yellow-100 text-yellow-700',
-    '결제취소': 'bg-red-100 text-alert-red',
   };
 
   return (
@@ -127,11 +132,9 @@ export default function OrderManagement() {
                     <td className="px-4 py-3 font-medium">{order.buyerName}</td>
                     <td className="px-4 py-3 text-gray-600">{order.sellerName}</td>
                     <td className="px-4 py-3 text-gray-600 max-w-32 truncate">{order.productName}</td>
-                    <td className="px-4 py-3 font-medium">{order.amount.toLocaleString()}원</td>
+                    <td className="px-4 py-3 font-medium">{order.totalPrice.toLocaleString()}원</td>
                     <td className="px-4 py-3"><Badge type="order">{order.status}</Badge></td>
-                    <td className="px-4 py-3">
-                      <span className={`badge ${statusColor[order.paymentStatus] ?? 'bg-gray-100 text-gray-600'}`}>{order.paymentStatus}</span>
-                    </td>
+                    <td className="px-4 py-3"><Badge type="payment">{order.paymentStatus}</Badge></td>
                     <td className="px-4 py-3 text-gray-500">{order.pickupTime}</td>
                     <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{order.orderedAt}</td>
                     <td className="px-4 py-3">
@@ -160,7 +163,7 @@ export default function OrderManagement() {
               {/* Actions */}
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => { setNewStatus(selected.status); setStatusChangeModal(true); }} className="btn-secondary flex-1 text-xs">상태 변경</button>
-                {selected.status !== '환불완료' && (
+                {selected.paymentStatus !== '환불완료' && (
                   <button onClick={() => setRefundModal(true)} className="btn-warning flex-1 text-xs">환불 처리</button>
                 )}
               </div>
@@ -170,9 +173,11 @@ export default function OrderManagement() {
                 <div className="space-y-2 text-sm">
                   {[
                     ['주문상태', <Badge type="order">{selected.status}</Badge>],
-                    ['결제상태', <span className={`badge ${statusColor[selected.paymentStatus] ?? 'bg-gray-100'}`}>{selected.paymentStatus}</span>],
+                    ['결제상태', <Badge type="payment">{selected.paymentStatus}</Badge>],
                     ['상품명', selected.productName],
-                    ['결제금액', `${selected.amount.toLocaleString()}원`],
+                    ['상품금액', `${selected.amount.toLocaleString()}원`],
+                    ['수수료', `${selected.fee.toLocaleString()}원`],
+                    ['결제금액', `${selected.totalPrice.toLocaleString()}원`],
                     ['수량', `${selected.quantity}개`],
                     ['주문일시', selected.orderedAt],
                     ['픽업시간', selected.pickupTime],
@@ -189,6 +194,7 @@ export default function OrderManagement() {
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">구매자 정보</p>
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between"><span className="text-gray-500">구매자</span><span>{selected.buyerName}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">안심번호</span><span className="font-mono text-xs">{selected.safeNumber ?? '-'}</span></div>
                 </div>
               </section>
 
@@ -199,11 +205,11 @@ export default function OrderManagement() {
                 </div>
               </section>
 
-              {selected.status === '분쟁중' && (
-                <div className="bg-purple-50 border border-purple-100 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-purple-700 mb-1">⚠️ 분쟁 진행 중</p>
-                  <p className="text-xs text-purple-600">이 주문은 분쟁 처리 중입니다. 정산에서 제외됩니다.</p>
-                </div>
+              {selected.memo && (
+                <section>
+                  <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">관리자 메모</p>
+                  <p className="text-sm text-charcoal bg-soft-gray rounded-lg p-3">{selected.memo}</p>
+                </section>
               )}
             </div>
           </div>
@@ -236,7 +242,7 @@ export default function OrderManagement() {
           <p className="text-sm text-gray-600">
             <strong>{selected?.buyerName}</strong>님의 주문 ({selected?.orderNumber})을 환불 처리합니다.
           </p>
-          <p className="text-sm font-semibold text-charcoal">환불 금액: {selected?.amount.toLocaleString()}원</p>
+          <p className="text-sm font-semibold text-charcoal">환불 금액: {selected?.totalPrice.toLocaleString()}원</p>
           <div className="bg-yellow-50 rounded-lg p-3">
             <p className="text-xs text-yellow-700">⚠️ 환불 처리 후 되돌릴 수 없으며, 모든 이력이 로그에 기록됩니다.</p>
           </div>

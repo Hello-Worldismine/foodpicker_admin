@@ -12,6 +12,14 @@ import type { Review, ReviewStatus } from '../types';
 const STATUSES: ReviewStatus[] = ['정상', '숨김', '신고검토', '삭제'];
 const PAGE_SIZE = 7;
 
+/**
+ * [백엔드 연동 안내] 현재 mockReviews(목데이터)로 동작 중. 실 서비스는 Supabase `reviews` 테이블(판매자 앱과 공유)에 대응됨.
+ * - 목록/검색: GET /api/admin/reviews?search=&status=&page=
+ * - ownerReply/ownerRepliedAt은 실 DB 컬럼(owner_reply, owner_replied_at)이 그대로 존재하므로 조회만 하면 됨.
+ * ⚠️ status(정상/숨김/신고검토/삭제) 모더레이션 상태와 reportCount(신고수)는 실 DB `reviews` 테이블에 대응 컬럼이 없음.
+ *    실 연동 전 백엔드에서 컬럼 추가(예: moderation_status, report_count) 또는 별도 review_reports 테이블 설계가 선행되어야 함.
+ */
+
 function Stars({ rating }: { rating: number }) {
   return (
     <div className="flex gap-0.5">
@@ -52,16 +60,15 @@ export default function ReviewManagement() {
       sheets: [{
         name: '리뷰 목록',
         data: filtered.map(r => ({
-          '리뷰번호': r.reviewNumber,
           '상품명': r.productName,
           '매장명': r.storeName,
           '구매자': r.buyerName,
           '별점': r.rating,
-          '리뷰태그': r.tags.join(', '),
           '리뷰내용': r.content,
           '작성일': r.writtenAt,
           '신고수': r.reportCount,
           '상태': r.status,
+          '판매자 답글': r.ownerReply ?? '',
         })),
       }],
     });
@@ -94,33 +101,28 @@ export default function ReviewManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['리뷰번호', '상품명', '매장명', '구매자', '별점', '리뷰 태그', '작성일', '신고수', '상태', '관리'].map(h => (
+                  {['상품명', '매장명', '구매자', '별점', '작성일', '신고수', '상태', '답글', '관리'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
-                  <tr><td colSpan={10}><EmptyState /></td></tr>
+                  <tr><td colSpan={9}><EmptyState /></td></tr>
                 ) : paginated.map(r => (
                   <tr
                     key={r.id}
                     className={`border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors ${selected?.id === r.id ? 'bg-primary-light' : ''}`}
                     onClick={() => setSelected(r)}
                   >
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{r.reviewNumber}</td>
                     <td className="px-4 py-3 font-medium max-w-32 truncate">{r.productName}</td>
                     <td className="px-4 py-3 text-gray-600">{r.storeName}</td>
                     <td className="px-4 py-3">{r.buyerName}</td>
                     <td className="px-4 py-3"><Stars rating={r.rating} /></td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 flex-wrap">
-                        {r.tags.map(t => <span key={t} className="badge bg-primary-light text-primary text-xs">{t}</span>)}
-                      </div>
-                    </td>
                     <td className="px-4 py-3 text-xs text-gray-400">{r.writtenAt.slice(0, 10)}</td>
                     <td className="px-4 py-3"><span className={r.reportCount > 0 ? 'text-alert-red font-semibold' : 'text-gray-600'}>{r.reportCount}</span></td>
                     <td className="px-4 py-3"><Badge type="review">{r.status}</Badge></td>
+                    <td className="px-4 py-3 text-gray-400">{r.ownerReply ? '있음' : '-'}</td>
                     <td className="px-4 py-3">
                       <button className="text-xs text-primary hover:underline" onClick={e => { e.stopPropagation(); setSelected(r); }}>상세</button>
                     </td>
@@ -137,7 +139,7 @@ export default function ReviewManagement() {
         {selected && (
           <div className="card w-full xl:w-96 flex-shrink-0 overflow-y-auto max-h-[calc(100vh-8rem)]">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h3 className="font-semibold text-charcoal">{selected.reviewNumber}</h3>
+              <h3 className="font-semibold text-charcoal truncate pr-4">{selected.productName}</h3>
               <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-charcoal text-xl leading-none">×</button>
             </div>
             <div className="p-5 space-y-5">
@@ -158,10 +160,15 @@ export default function ReviewManagement() {
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">리뷰 내용</p>
                 <p className="text-sm text-charcoal bg-soft-gray rounded-lg p-3">{selected.content}</p>
-                <div className="flex gap-1 mt-2 flex-wrap">
-                  {selected.tags.map(t => <span key={t} className="badge bg-primary-light text-primary">{t}</span>)}
-                </div>
               </section>
+
+              {selected.ownerReply && (
+                <section>
+                  <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">판매자 답글</p>
+                  <p className="text-sm text-charcoal bg-primary-light rounded-lg p-3">{selected.ownerReply}</p>
+                  {selected.ownerRepliedAt && <p className="text-xs text-gray-400 mt-1">{selected.ownerRepliedAt}</p>}
+                </section>
+              )}
 
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">관리자 메모</p>

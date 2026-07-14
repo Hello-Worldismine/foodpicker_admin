@@ -9,6 +9,13 @@ import { useExcelDownload } from '../hooks/useExcelDownload';
 
 const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'];
 
+/**
+ * [백엔드 연동 안내] 이 페이지의 모든 데이터(지역별/카테고리별 폐기 감소량, 월별 추이)가 하드코딩된 예시값이며,
+ * 실 DB에 폐기량 관련 컬럼/테이블이 존재하지 않음(신규 집계 설계 필요).
+ * 제안 방향: 완료된 주문(orders, seller_status='completed')의 상품 정가(original_price) 합계 등을 기준으로
+ * "판매되지 않았다면 폐기됐을 양"을 추정하는 별도 배치 집계 파이프라인 + 결과 저장 테이블(env_stats_daily 등) 설계 필요.
+ * API 예시: GET /api/admin/env-stats?period=monthly
+ */
 const regionData = [
   { region: '서울 강남', kg: 124 },
   { region: '서울 마포', kg: 87 },

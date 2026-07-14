@@ -4,6 +4,14 @@ import Modal from '../components/ui/Modal';
 import { mockCategories } from '../data/mockData';
 import type { Category } from '../types';
 
+/**
+ * [백엔드 연동 안내] 현재 mockCategories(목데이터)로 동작 중. 실 DB에는 카테고리 테이블이 없고
+ * `products.category`가 자유 텍스트 문자열로 저장됨(참조 무결성 없음).
+ * 이 화면처럼 카테고리를 관리형 엔티티(순서/아이콘/활성화)로 운영하려면:
+ * 1) categories 테이블 신설: (id, name, icon, display_order, active)
+ * 2) products.category를 category_id FK로 바꾸는 마이그레이션 + 기존 문자열 값 매핑 작업 필요
+ * API 예시: GET /api/admin/categories, POST /api/admin/categories, PATCH /api/admin/categories/:id (순서/활성화 포함)
+ */
 export default function CategoryManagement() {
   const [categories, setCategories] = useState<Category[]>(mockCategories);
   const [modal, setModal] = useState(false);

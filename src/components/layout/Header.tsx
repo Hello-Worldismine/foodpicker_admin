@@ -1,4 +1,4 @@
-import { Search, Bell, LogOut, ChevronDown } from 'lucide-react';
+import { Search, Bell, LogOut, ChevronDown, Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useState } from 'react';
 
@@ -19,7 +19,7 @@ const pageTitles: Record<string, string> = {
 };
 
 interface HeaderProps {
-  sidebarWidth: number;
+  onMenuClick: () => void;
 }
 
 const notifications = [
@@ -28,7 +28,7 @@ const notifications = [
   { id: 3, text: '신고 누적 판매자 2곳 확인 필요', time: '1시간 전', type: 'warn' },
 ];
 
-export default function Header({ sidebarWidth }: HeaderProps) {
+export default function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -39,10 +39,13 @@ export default function Header({ sidebarWidth }: HeaderProps) {
 
   return (
     <header
-      className="fixed top-0 right-0 h-16 bg-white border-b border-gray-100 flex items-center px-6 gap-4 z-20 transition-all duration-300"
-      style={{ left: sidebarWidth }}
+      className="fixed top-0 left-0 right-0 lg:left-[var(--sidebar-w)] h-16 bg-white border-b border-gray-100 flex items-center pl-4 lg:pl-8 pr-4 sm:pr-6 gap-2 sm:gap-4 z-20 transition-all duration-300"
     >
-      <h1 className="text-lg font-semibold text-charcoal mr-auto">{pageTitle}</h1>
+      <button onClick={onMenuClick} className="p-2 -ml-2 rounded-lg hover:bg-soft-gray transition-colors lg:hidden">
+        <Menu size={20} className="text-gray-600" />
+      </button>
+
+      <h1 className="text-base sm:text-lg font-semibold text-charcoal mr-auto truncate">{pageTitle}</h1>
 
       {/* Search */}
       <div className="relative hidden sm:block">

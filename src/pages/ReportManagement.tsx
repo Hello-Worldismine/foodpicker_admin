@@ -23,6 +23,17 @@ const REPORT_TYPES = [
 const STATUSES: ReportStatus[] = ['접수', '확인중', '판매자 답변 대기', '구매자 답변 대기', '환불 처리', '종결'];
 const PAGE_SIZE = 6;
 
+/**
+ * [백엔드 연동 안내] 현재 mockReports(목데이터)로만 동작하며, 실 DB에는 신고/문의를 저장할 테이블이 아직 없음(신규 설계 필요).
+ * 제안 스키마: reports(id, receipt_code, type, order_id FK, buyer_id FK, seller_id FK, title, content, status, manager_id FK, created_at, updated_at)
+ * + 처리 이력(logs state)은 report_activity_logs(report_id, admin_id, message, created_at) 같은 별도 테이블 또는 감사로그 테이블 재사용 권장.
+ * API 예시:
+ * - GET /api/admin/reports?search=&type=&status=&page=
+ * - PATCH /api/admin/reports/:id/status  { status }
+ * - POST /api/admin/reports/:id/reply  { content }  → 처리 이력에 기록
+ * - POST /api/admin/reports/:id/refund  → orders/settlements 쪽 환불 플로우와 연동 필요
+ */
+
 export default function ReportManagement() {
   const [reports, setReports] = useState<Report[]>(mockReports);
   const [search, setSearch] = useState('');

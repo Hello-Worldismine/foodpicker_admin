@@ -10,7 +10,16 @@ import { useExcelDownload } from '../hooks/useExcelDownload';
 import { mockSellers } from '../data/mockData';
 import type { Seller, SellerStatus } from '../types';
 
-const STATUS_OPTIONS: SellerStatus[] = ['승인대기', '승인완료', '반려', '이용정지', '탈퇴'];
+/**
+ * [백엔드 연동 안내] 현재 mockSellers(목데이터)로 동작 중. 실 서비스는 Supabase `stores` 테이블(판매자 앱과 공유)에 대응됨.
+ * - 목록/검색: GET /api/admin/sellers?search=&status=&region=&page=
+ * - 상세: GET /api/admin/sellers/:id
+ * - 승인/반려: PATCH /api/admin/sellers/:id/approval  { approvalStatus: 'approved'|'pending'|'rejected', rejectReason? }
+ * - 이용정지/해제: PATCH /api/admin/sellers/:id/pause  { isSellingPaused: boolean, reason? }  (DB의 stores.is_selling_paused)
+ * - 수수료율 변경: PATCH /api/admin/sellers/:id/commission  { commissionRate: number }  (stores.commission_rate, 판매자는 수정 불가 — 관리자 전용 컬럼)
+ * ⚠️ 보안: residentNumberMasked(주민번호)는 반드시 마스킹된 값만 API 응답에 포함할 것. 평문 주민번호/전체 사업자 서류는 별도 권한 체크 후에만 조회.
+ */
+const STATUS_OPTIONS: SellerStatus[] = ['승인대기', '승인완료', '반려', '이용정지'];
 const REGIONS = ['전체', '서울 강남', '서울 마포', '서울 서초', '서울 홍대', '서울 강동', '경기 성남', '경기 수원', '인천 연수'];
 const REJECT_REASONS = [
   '사업자등록증 정보가 불명확합니다.',
@@ -37,7 +46,7 @@ export default function SellerManagement() {
   const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const filtered = sellers.filter(s => {
-    const matchSearch = s.storeName.includes(search) || s.businessNumber.includes(search) || s.ownerName.includes(search);
+    const matchSearch = s.storeName.includes(search) || s.bizNumber.includes(search) || s.ownerName.includes(search);
     const matchStatus = statusFilter === '전체' || s.status === statusFilter;
     const matchRegion = regionFilter === '전체' || s.region === regionFilter;
     return matchSearch && matchStatus && matchRegion;
@@ -61,9 +70,10 @@ export default function SellerManagement() {
         data: filtered.map(s => ({
           '매장명': s.storeName,
           '대표자명': s.ownerName,
-          '사업자번호': s.businessNumber,
+          '사업자번호': s.bizNumber,
           '지역': s.region,
           '상태': s.status,
+          '수수료율(%)': s.commissionRate,
           '가입일': s.joinDate,
           '연락처': s.phone,
           '이메일': s.email,
@@ -148,7 +158,7 @@ export default function SellerManagement() {
                   >
                     <td className="px-4 py-3 font-medium text-charcoal">{seller.storeName}</td>
                     <td className="px-4 py-3 text-gray-600">{seller.ownerName}</td>
-                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{seller.businessNumber}</td>
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{seller.bizNumber}</td>
                     <td className="px-4 py-3 text-gray-600">{seller.region}</td>
                     <td className="px-4 py-3"><Badge type="seller">{seller.status}</Badge></td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{seller.joinDate}</td>
@@ -208,11 +218,13 @@ export default function SellerManagement() {
                   {[
                     ['상태', <Badge type="seller">{selected.status}</Badge>],
                     ['대표자', selected.ownerName],
-                    ['사업자번호', selected.businessNumber],
+                    ['사업자번호', selected.bizNumber],
+                    ['주민번호', <span className="font-mono text-xs">{selected.residentNumberMasked ?? '-'}</span>],
                     ['연락처', selected.phone],
                     ['이메일', selected.email],
                     ['지역', selected.region],
                     ['가입일', selected.joinDate],
+                    ['수수료율', `${selected.commissionRate}%`],
                     ['누적 주문', `${selected.totalOrders}건`],
                     ['신고 수', `${selected.reportCount}건`],
                   ].map(([label, value]) => (

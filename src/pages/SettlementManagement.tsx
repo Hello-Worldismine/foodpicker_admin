@@ -12,6 +12,13 @@ import type { Settlement, SettlementStatus } from '../types';
 
 const PAGE_SIZE = 6;
 
+/**
+ * [백엔드 연동 안내] 현재 mockSettlements(목데이터)로 동작 중. 실 서비스는 Supabase `settlements` 테이블(판매자 앱과 공유)에 대응됨.
+ * - 목록/검색: GET /api/admin/settlements?search=&status=&periodStart=&periodEnd=&page=
+ * - 정산 확정: PATCH /api/admin/settlements/:id/confirm  (status→'completed', settled_on 기록)
+ * - 정산 보류: PATCH /api/admin/settlements/:id/hold  { reason }  (status→'on_hold')
+ * - platformFee/pgFee는 정산 배치(주간 배치, migration의 weekly settlement batch 참고)가 계산해 내려주는 값으로 관리자는 조회만 한다.
+ */
 export default function SettlementManagement() {
   const [settlements, setSettlements] = useState<Settlement[]>(mockSettlements);
   const [search, setSearch] = useState('');
@@ -32,7 +39,7 @@ export default function SettlementManagement() {
   ];
 
   const filtered = settlements.filter(s => {
-    const matchSearch = s.sellerName.includes(search) || s.businessNumber.includes(search);
+    const matchSearch = s.sellerName.includes(search) || s.bizNumber.includes(search);
     const matchStatus = statusFilter === '전체' || s.status === statusFilter;
     const periodStart = s.period.split(' ~ ')[0]?.trim() ?? '';
     const periodEnd = s.period.split(' ~ ')[1]?.trim() ?? '';
@@ -77,9 +84,11 @@ export default function SettlementManagement() {
         data: filtered.map(s => ({
           '정산기간': s.period,
           '판매자명': s.sellerName,
-          '사업자번호': s.businessNumber,
+          '사업자번호': s.bizNumber,
           '총판매금액(원)': s.totalSales,
-          '수수료(원)': s.commission,
+          '플랫폼수수료(원)': s.platformFee,
+          'PG수수료(원)': s.pgFee,
+          '수수료합계(원)': s.commission,
           '환불금액(원)': s.refundAmount,
           '최종정산금액(원)': s.finalAmount,
           '정산상태': s.status,
@@ -224,7 +233,7 @@ export default function SettlementManagement() {
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">판매자 정보</p>
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between"><span className="text-gray-500">판매자</span><span>{selected.sellerName}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">사업자번호</span><span className="font-mono text-xs">{selected.businessNumber}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">사업자번호</span><span className="font-mono text-xs">{selected.bizNumber}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">은행</span><span>{selected.bankName}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">계좌번호</span><span className="font-mono text-xs">{selected.accountNumber}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">예금주</span><span>{selected.accountHolder}</span></div>
@@ -237,7 +246,8 @@ export default function SettlementManagement() {
                   <div className="flex justify-between"><span className="text-gray-500">정산기간</span><span className="text-xs">{selected.period}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">상태</span><Badge type="settlement">{selected.status}</Badge></div>
                   <div className="flex justify-between"><span className="text-gray-500">총 판매금액</span><span>{selected.totalSales.toLocaleString()}원</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">수수료 (10%)</span><span className="text-warm-orange">-{selected.commission.toLocaleString()}원</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">플랫폼 수수료</span><span className="text-warm-orange">-{selected.platformFee.toLocaleString()}원</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">PG 수수료</span><span className="text-warm-orange">-{selected.pgFee.toLocaleString()}원</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">환불금액</span><span className="text-alert-red">-{selected.refundAmount.toLocaleString()}원</span></div>
                   <div className="h-px bg-gray-100 my-1" />
                   <div className="flex justify-between font-semibold"><span>최종 정산금액</span><span className="text-primary">{selected.finalAmount.toLocaleString()}원</span></div>

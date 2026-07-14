@@ -1,4 +1,4 @@
-import type { SellerStatus, ProductStatus, OrderStatus, SettlementStatus, ReportStatus, ReviewStatus } from '../../types';
+import type { SellerStatus, ProductStatus, OrderStatus, PaymentStatus, SettlementStatus, ReportStatus, ReviewStatus } from '../../types';
 
 type BadgeVariant = 'green' | 'yellow' | 'red' | 'gray' | 'blue' | 'orange' | 'purple';
 
@@ -17,27 +17,27 @@ const sellerStatusMap: Record<SellerStatus, BadgeVariant> = {
   '승인완료': 'green',
   '반려': 'red',
   '이용정지': 'orange',
-  '탈퇴': 'gray',
 };
 
 const productStatusMap: Record<ProductStatus, BadgeVariant> = {
   '판매중': 'green',
   '품절': 'gray',
-  '판매종료': 'gray',
+  '판매중지': 'red',
   '숨김': 'gray',
-  '검수대기': 'yellow',
-  '반려': 'red',
-  '관리자중지': 'red',
 };
 
 const orderStatusMap: Record<OrderStatus, BadgeVariant> = {
-  '결제완료': 'blue',
+  '신규접수': 'blue',
   '픽업대기': 'yellow',
   '픽업완료': 'green',
-  '취소요청': 'orange',
+  '취소': 'gray',
+};
+
+const paymentStatusMap: Record<PaymentStatus, BadgeVariant> = {
+  '결제대기': 'yellow',
+  '결제완료': 'blue',
+  '결제취소': 'red',
   '환불완료': 'gray',
-  '노쇼': 'red',
-  '분쟁중': 'purple',
 };
 
 const settlementStatusMap: Record<SettlementStatus, BadgeVariant> = {
@@ -65,7 +65,7 @@ const reviewStatusMap: Record<ReviewStatus, BadgeVariant> = {
 interface BadgeProps {
   children: string;
   variant?: BadgeVariant;
-  type?: 'seller' | 'product' | 'order' | 'settlement' | 'report' | 'review';
+  type?: 'seller' | 'product' | 'order' | 'payment' | 'settlement' | 'report' | 'review';
 }
 
 export default function Badge({ children, variant, type }: BadgeProps) {
@@ -75,6 +75,7 @@ export default function Badge({ children, variant, type }: BadgeProps) {
     if (type === 'seller') resolvedVariant = sellerStatusMap[children as SellerStatus] ?? 'gray';
     else if (type === 'product') resolvedVariant = productStatusMap[children as ProductStatus] ?? 'gray';
     else if (type === 'order') resolvedVariant = orderStatusMap[children as OrderStatus] ?? 'gray';
+    else if (type === 'payment') resolvedVariant = paymentStatusMap[children as PaymentStatus] ?? 'gray';
     else if (type === 'settlement') resolvedVariant = settlementStatusMap[children as SettlementStatus] ?? 'gray';
     else if (type === 'report') resolvedVariant = reportStatusMap[children as ReportStatus] ?? 'gray';
     else if (type === 'review') resolvedVariant = reviewStatusMap[children as ReviewStatus] ?? 'gray';

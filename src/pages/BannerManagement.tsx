@@ -4,6 +4,15 @@ import Modal from '../components/ui/Modal';
 import { mockBanners, mockNotices } from '../data/mockData';
 import type { Banner, Notice } from '../types';
 
+/**
+ * [백엔드 연동 안내] 현재 mockBanners/mockNotices(목데이터)로 동작 중.
+ * - 공지(Notice)는 실 DB `notices` 테이블이 존재함: GET /api/admin/notices, POST /api/admin/notices, PATCH /api/admin/notices/:id
+ *   단, 실 테이블 컬럼은 (notice_code, emoji, title, content, published_at, is_published)뿐이라
+ *   관리자 화면의 target(전체/사용자/판매자)·startDate/endDate·important는 컬럼 추가 마이그레이션이 선행되어야 함.
+ * - 배너(Banner)는 실 DB에 대응 테이블이 아예 없음(신규 설계 필요).
+ *   제안 스키마: banners(id, title, image_url, link, position, start_date, end_date, active, created_at)
+ *   API 예시: GET /api/admin/banners, POST /api/admin/banners, PATCH /api/admin/banners/:id
+ */
 export default function BannerManagement() {
   const [tab, setTab] = useState<'banner' | 'notice'>('banner');
   const [banners, setBanners] = useState<Banner[]>(mockBanners);
