@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Eye, CheckCircle, XCircle, EyeOff, AlertTriangle } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
@@ -7,20 +7,19 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockProducts } from '../data/mockData';
+import { fetchProducts, setProductStatus } from '../lib/api';
 import type { Product, ProductStatus } from '../types';
 
 // 판매자 앱은 상품 등록 즉시 '판매중' 상태로 게시하므로(사전 검수 단계 없음),
 // 실제 product_status enum과 동일한 4개 상태만 관리자가 다룬다.
 /**
- * [백엔드 연동 안내] 현재 mockProducts(목데이터)로 동작 중. 실 서비스는 Supabase `products` 테이블(판매자 앱과 공유)에 대응됨.
- * - 목록/검색: GET /api/admin/products?search=&status=&category=&page=
- * - 숨김/판매중지 처리: PATCH /api/admin/products/:id/status  { status: 'selling'|'soldout'|'paused'|'hidden', pauseReason?: 'expiry'|'manual', rejectReason?: string }
- * - 판매 재개: PATCH /api/admin/products/:id/status  { status: 'selling' }  (백엔드에서 소비기한(expiryDate) 경과 여부 재검증 필요)
- * 참고: 자동할인(startPrice/floorPrice/reductionAmount/intervalMinutes)은 판매자 앱이 스케줄링하는 필드로, 관리자는 조회만 하고 수정 API는 불필요.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 목록: fetchProducts() → admin_products 뷰(products + 매장명/신고수 조인)
+ * - 숨김/판매중지/판매 재개: setProductStatus(id, '숨김'|'판매중지'|'판매중', reason?) → admin_set_product_status RPC(감사 로그 서버 자동 기록)
+ *   판매 재개 시 서버가 소비기한 경과 여부를 재검증하고, 재고 0이면 트리거가 품절로 전환하므로 성공 후 목록을 전체 refetch 한다.
+ * 참고: 자동할인(startPrice/floorPrice/reductionAmount/intervalMinutes)은 판매자 앱이 스케줄링하는 필드로, 관리자는 조회만 한다.
  */
 const STATUS_OPTIONS: ProductStatus[] = ['판매중', '품절', '판매중지', '숨김'];
-const CATEGORIES = ['전체', '빵', '도시락', '샐러드', '반찬', '디저트', '음료', '기타'];
 const PAGE_SIZE = 6;
 
 function isExpired(expiryDate: string) {
@@ -35,7 +34,9 @@ function isPickupAfterExpiry(pickupEnd: string, expiryDate: string, productDate:
 }
 
 export default function ProductManagement() {
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ProductStatus | '전체'>('전체');
   const [categoryFilter, setCategoryFilter] = useState('전체');
@@ -44,6 +45,17 @@ export default function ProductManagement() {
   const [actionModal, setActionModal] = useState<'hide' | 'stop' | null>(null);
   const [actionReason, setActionReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchProducts()
+      .then(rows => { if (!cancelled) setProducts(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const categories = ['전체', ...new Set(products.map(p => p.category))];
 
   const filtered = products.filter(p => {
     const matchSearch = p.name.includes(search) || p.storeName.includes(search);
@@ -90,28 +102,38 @@ export default function ProductManagement() {
     });
   };
 
-  const updateStatus = (id: string, status: ProductStatus, memo?: string, pauseReason?: Product['pauseReason']) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, status, memo: memo ?? p.memo, pauseReason } : p));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status, pauseReason } : null);
+  // 상태 변경 후 전체 refetch: 서버 트리거(재고 0 → 품절 등)가 반영된 최신 목록으로 갱신
+  const refetchProducts = async (selectedId?: string) => {
+    const rows = await fetchProducts();
+    setProducts(rows);
+    if (selectedId) setSelected(rows.find(p => p.id === selectedId) ?? null);
   };
 
-  const handleResume = (product: Product) => {
+  const handleResume = async (product: Product) => {
     if (isExpired(product.expiryDate)) {
       alert('소비기한이 경과된 상품은 판매 재개할 수 없습니다.');
       return;
     }
-    updateStatus(product.id, '판매중');
+    try {
+      // 서버(RPC)가 소비기한 경과 여부를 다시 검증한다.
+      await setProductStatus(product.id, '판매중');
+      await refetchProducts(product.id);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (!selected || !actionReason.trim()) return alert('사유를 입력해주세요.');
-    if (actionModal === 'hide') {
-      updateStatus(selected.id, '숨김', actionReason);
-    } else {
-      updateStatus(selected.id, '판매중지', actionReason, '관리자 중지');
+    const nextStatus: ProductStatus = actionModal === 'hide' ? '숨김' : '판매중지';
+    try {
+      await setProductStatus(selected.id, nextStatus, actionReason);
+      setActionModal(null);
+      setActionReason('');
+      await refetchProducts(selected.id);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
     }
-    setActionModal(null);
-    setActionReason('');
   };
 
   const getWarnings = (p: Product) => {
@@ -137,7 +159,7 @@ export default function ProductManagement() {
             {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select className="input w-32" value={categoryFilter} onChange={e => { setCategoryFilter(e.target.value); setPage(1); }}>
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
@@ -156,7 +178,11 @@ export default function ProductManagement() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.length === 0 ? (
+                {loading ? (
+                  <tr><td colSpan={11}><div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div></td></tr>
+                ) : loadError ? (
+                  <tr><td colSpan={11}><div className="py-16 text-center text-sm text-alert-red">{loadError}</div></td></tr>
+                ) : paginated.length === 0 ? (
                   <tr><td colSpan={11}><EmptyState /></td></tr>
                 ) : paginated.map(product => {
                   const warnings = getWarnings(product);

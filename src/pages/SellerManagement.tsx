@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
@@ -7,22 +7,17 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockSellers } from '../data/mockData';
+import { fetchSellers, setStoreApproval, setStoreSuspension } from '../lib/api';
 import type { Seller, SellerStatus } from '../types';
 
 /**
- * [백엔드 연동 안내] 현재 mockSellers(목데이터)로 동작 중. 실 서비스는 Supabase `stores` 테이블(판매자 앱과 공유)에 대응됨.
- * - 목록/검색: GET /api/admin/sellers?search=&status=&region=&page=
- * - 상세: GET /api/admin/sellers/:id
- * - 승인/반려: PATCH /api/admin/sellers/:id/approval  { approvalStatus: 'approved'|'pending'|'rejected', rejectReason? }
- * - 이용정지/해제: PATCH /api/admin/sellers/:id/pause  { isSellingPaused: boolean, reason? }  (DB의 stores.is_selling_paused)
- * - 수수료율 변경: PATCH /api/admin/sellers/:id/commission  { commissionRate: number }  (stores.commission_rate, 판매자는 수정 불가 — 관리자 전용 컬럼)
- * - 사업자등록증 다운로드: bizCertImage는 실제로는 Supabase Storage에 업로드된 파일의 signed URL(만료시간 있는 임시 URL)이어야 함.
- *   퍼블릭 URL로 영구 노출하지 말 것 — 다운로드 버튼 클릭 시점에 GET /api/admin/sellers/:id/biz-cert 로 signed URL을 새로 발급받는 방식을 권장.
- * ⚠️ 보안: residentNumberMasked(주민번호)는 반드시 마스킹된 값만 API 응답에 포함할 것. 평문 주민번호/전체 사업자 서류는 별도 권한 체크 후에만 조회.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 목록: admin_stores 뷰(fetchSellers) — 검색/상태/지역 필터·페이지네이션은 클라이언트에서 처리.
+ * - 승인/반려: admin_set_store_approval RPC(setStoreApproval), 이용정지/해제: admin_set_store_suspension RPC(setStoreSuspension).
+ *   RPC가 감사 로그를 자동 기록하므로 별도 logAction 호출 불필요.
+ * ⚠️ 보안: residentNumberMasked(주민번호)는 마스킹된 값만 표시. bizCertImage 는 Storage URL(실서비스는 signed URL 권장).
  */
 const STATUS_OPTIONS: SellerStatus[] = ['승인대기', '승인완료', '반려', '이용정지'];
-const REGIONS = ['전체', '서울 강남', '서울 마포', '서울 서초', '서울 홍대', '서울 강동', '경기 성남', '경기 수원', '인천 연수'];
 const REJECT_REASONS = [
   '사업자등록증 정보가 불명확합니다.',
   '매장 주소 확인이 필요합니다.',
@@ -34,7 +29,9 @@ const REJECT_REASONS = [
 const PAGE_SIZE = 6;
 
 export default function SellerManagement() {
-  const [sellers, setSellers] = useState<Seller[]>(mockSellers);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<SellerStatus | '전체'>('전체');
   const [regionFilter, setRegionFilter] = useState('전체');
@@ -46,6 +43,17 @@ export default function SellerManagement() {
   const [customReason, setCustomReason] = useState('');
   const [suspendReason, setSuspendReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSellers()
+      .then(rows => { if (!cancelled) setSellers(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const regionOptions = ['전체', ...new Set(sellers.map(s => s.region).filter(r => r && r !== '전체'))];
 
   const filtered = sellers.filter(s => {
     const matchSearch = s.storeName.includes(search) || s.bizNumber.includes(search) || s.ownerName.includes(search);
@@ -91,30 +99,48 @@ export default function SellerManagement() {
     });
   };
 
+  // RPC 반환값은 뷰 전용 필드(email/totalOrders 등)가 비어 있으므로 status/memo 만 기존 항목에 병합한다.
   const updateStatus = (id: string, status: SellerStatus, memo?: string) => {
     setSellers(prev => prev.map(s => s.id === id ? { ...s, status, memo: memo ?? s.memo } : s));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+    setSelected(prev => prev && prev.id === id ? { ...prev, status, memo: memo ?? prev.memo } : prev);
   };
 
-  const handleApprove = (seller: Seller) => {
-    updateStatus(seller.id, '승인완료');
+  const handleApprove = async (seller: Seller) => {
+    try {
+      const updated = seller.status === '이용정지'
+        ? await setStoreSuspension(seller.id, false)
+        : await setStoreApproval(seller.id, 'approved');
+      updateStatus(seller.id, updated.status, updated.memo);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!selected) return;
     const reason = rejectReason === '직접 입력' ? customReason : rejectReason;
     if (!reason) return alert('반려 사유를 선택해주세요.');
-    updateStatus(selected.id, '반려', reason);
-    setRejectModal(false);
-    setRejectReason('');
-    setCustomReason('');
+    try {
+      const updated = await setStoreApproval(selected.id, 'rejected', reason);
+      updateStatus(selected.id, updated.status, updated.memo);
+      setRejectModal(false);
+      setRejectReason('');
+      setCustomReason('');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleSuspend = () => {
+  const handleSuspend = async () => {
     if (!selected || !suspendReason.trim()) return alert('이용정지 사유를 입력해주세요.');
-    updateStatus(selected.id, '이용정지', suspendReason);
-    setSuspendModal(false);
-    setSuspendReason('');
+    try {
+      const updated = await setStoreSuspension(selected.id, true, suspendReason.trim());
+      updateStatus(selected.id, updated.status, updated.memo);
+      setSuspendModal(false);
+      setSuspendReason('');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -131,7 +157,7 @@ export default function SellerManagement() {
             {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select className="input w-40" value={regionFilter} onChange={e => { setRegionFilter(e.target.value); setPage(1); }}>
-            {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            {regionOptions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
@@ -140,6 +166,12 @@ export default function SellerManagement() {
       <div className="flex gap-4">
         {/* List */}
         <div className={`card flex-1 overflow-hidden ${selected ? 'hidden xl:block' : ''}`}>
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+          ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -181,6 +213,8 @@ export default function SellerManagement() {
           <div className="px-4">
             <Pagination page={page} totalPages={Math.ceil(filtered.length / PAGE_SIZE)} onPageChange={setPage} totalItems={filtered.length} pageSize={PAGE_SIZE} />
           </div>
+          </>
+          )}
         </div>
 
         {/* Detail Panel */}

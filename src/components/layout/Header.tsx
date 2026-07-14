@@ -1,6 +1,8 @@
 import { Search, Bell, LogOut, ChevronDown, Menu } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useAdmin } from '../../context/AdminContext';
+import { fetchDashboardStats } from '../../lib/api';
 
 const pageTitles: Record<string, string> = {
   '/': '대시보드',
@@ -22,16 +24,33 @@ interface HeaderProps {
   onMenuClick: () => void;
 }
 
-const notifications = [
-  { id: 1, text: '소비기한 경과 상품 등록 시도 3건', time: '방금', type: 'warn' },
-  { id: 2, text: '신규 판매자 신청 8건 검토 필요', time: '10분 전', type: 'info' },
-  { id: 3, text: '신고 누적 판매자 2곳 확인 필요', time: '1시간 전', type: 'warn' },
-];
+interface HeaderAlert {
+  id: number;
+  text: string;
+  path: string;
+}
 
 export default function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { currentAdmin, signOut } = useAdmin();
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [alerts, setAlerts] = useState<HeaderAlert[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDashboardStats().then(stats => {
+      if (cancelled || !stats) return;
+      const next: HeaderAlert[] = [];
+      if (stats.newSellerApps > 0) next.push({ id: 1, text: `신규 판매자 신청 ${stats.newSellerApps}건 검토 필요`, path: '/sellers' });
+      if (stats.unresolvedReports > 0) next.push({ id: 2, text: `미처리 신고/문의 ${stats.unresolvedReports}건`, path: '/reports' });
+      if (stats.pendingSettlements > 0) next.push({ id: 3, text: `정산 보류 ${stats.pendingSettlements}건 확인 필요`, path: '/settlements' });
+      if (stats.expiryPausedCount > 0) next.push({ id: 4, text: `소비기한 경과로 중지된 상품 ${stats.expiryPausedCount}건`, path: '/products' });
+      setAlerts(next);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [location.pathname]);
 
   const pageTitle = Object.entries(pageTitles).find(([path]) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
@@ -64,18 +83,26 @@ export default function Header({ onMenuClick }: HeaderProps) {
           className="relative p-2 rounded-lg hover:bg-soft-gray transition-colors"
         >
           <Bell size={20} className="text-gray-600" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-alert-red rounded-full" />
+          {alerts.length > 0 && (
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-alert-red rounded-full" />
+          )}
         </button>
         {showNotif && (
           <div className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-50">
             <div className="px-4 py-3 border-b border-gray-100">
               <p className="text-sm font-semibold">알림</p>
             </div>
-            {notifications.map(n => (
-              <div key={n.id} className="px-4 py-3 hover:bg-soft-gray cursor-pointer border-b border-gray-50 last:border-0">
+            {alerts.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">확인할 알림이 없습니다.</div>
+            )}
+            {alerts.map(n => (
+              <button
+                key={n.id}
+                onClick={() => { setShowNotif(false); navigate(n.path); }}
+                className="block w-full text-left px-4 py-3 hover:bg-soft-gray cursor-pointer border-b border-gray-50 last:border-0"
+              >
                 <p className="text-sm text-charcoal">{n.text}</p>
-                <p className="text-xs text-gray-400 mt-1">{n.time}</p>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -88,18 +115,21 @@ export default function Header({ onMenuClick }: HeaderProps) {
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-soft-gray transition-colors"
         >
           <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center">
-            <span className="text-white text-xs font-bold">김</span>
+            <span className="text-white text-xs font-bold">{currentAdmin.name.charAt(0)}</span>
           </div>
-          <span className="text-sm font-medium hidden sm:block">김관리</span>
+          <span className="text-sm font-medium hidden sm:block">{currentAdmin.name}</span>
           <ChevronDown size={14} className="text-gray-400" />
         </button>
         {showProfile && (
           <div className="absolute right-0 top-12 w-44 bg-white rounded-xl shadow-lg border border-gray-100 z-50">
             <div className="px-4 py-3 border-b border-gray-100">
-              <p className="text-sm font-semibold">김관리</p>
-              <p className="text-xs text-gray-400">최고관리자</p>
+              <p className="text-sm font-semibold">{currentAdmin.name}</p>
+              <p className="text-xs text-gray-400">{currentAdmin.role}</p>
             </div>
-            <button className="flex items-center gap-2 w-full px-4 py-3 text-sm text-alert-red hover:bg-soft-gray transition-colors">
+            <button
+              onClick={() => signOut()}
+              className="flex items-center gap-2 w-full px-4 py-3 text-sm text-alert-red hover:bg-soft-gray transition-colors"
+            >
               <LogOut size={16} />
               로그아웃
             </button>

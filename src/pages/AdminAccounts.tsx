@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Edit2 } from 'lucide-react';
 import Modal from '../components/ui/Modal';
 import Switch from '../components/ui/Switch';
-import { mockAdmins } from '../data/mockData';
+import { fetchAdmins, addAdminAccount, updateAdminAccount } from '../lib/api';
 import type { AdminAccount, AdminRole } from '../types';
 
 const ROLES: AdminRole[] = ['최고관리자', '운영관리자', '정산관리자', 'CS관리자', '읽기전용'];
@@ -24,36 +24,61 @@ const roleBadge: Record<AdminRole, string> = {
 };
 
 /**
- * [백엔드 연동 안내] 현재 mockAdmins(목데이터)로 동작 중. 실 서비스는 관리자 다단계 권한 모델 자체가 없음(신규 설계 필요).
- * 현재 판매자 앱 인증은 `auth.users.raw_app_meta_data.role = 'seller'` 정도만 사용하며, admin_accounts 개념이 DB에 없음.
- * 제안 방향: admin_accounts(id, name, email, role, status) 테이블 + Supabase Auth 연동, role별 RLS/API 접근 제어.
- * ⚠️ 로그인 화면/인증 로직은 이번 작업 범위에서 의도적으로 제외됨 — 백엔드에서 인증 설계 확정 후 별도로 연동 필요.
- * API 예시: GET /api/admin/accounts, POST /api/admin/accounts, PATCH /api/admin/accounts/:id (role/status 변경)
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 조회: admin_profiles 테이블(fetchAdmins). 추가/수정/활성토글: admin_add_account / admin_update_account RPC(서버가 감사 로그 자동 기록).
+ * - 관리자 추가는 이미 Supabase Auth 에 가입된 이메일만 가능(RPC 가 'user not found' 에러 반환).
+ * - 이메일은 인증 계정 식별자라 수정 불가. 마지막 최고관리자 강등/비활성화는 서버에서 차단됨.
  */
 export default function AdminAccounts() {
-  const [admins, setAdmins] = useState<AdminAccount[]>(mockAdmins);
+  const [admins, setAdmins] = useState<AdminAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState(false);
   const [editAdmin, setEditAdmin] = useState<AdminAccount | null>(null);
   const [form, setForm] = useState({ name: '', email: '', role: '읽기전용' as AdminRole });
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchAdmins()
+      .then(rows => { if (!cancelled) setAdmins(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const openAdd = () => { setEditAdmin(null); setForm({ name: '', email: '', role: '읽기전용' }); setModal(true); };
   const openEdit = (a: AdminAccount) => { setEditAdmin(a); setForm({ name: a.name, email: a.email, role: a.role }); setModal(true); };
 
-  const save = () => {
+  const save = async () => {
     if (!form.name || !form.email) return alert('이름과 이메일을 입력하세요.');
-    if (editAdmin) {
-      setAdmins(prev => prev.map(a => a.id === editAdmin.id ? { ...a, ...form } : a));
-    } else {
-      setAdmins(prev => [...prev, {
-        id: `a${Date.now()}`, ...form, status: '활성',
-        lastLogin: '-', createdAt: new Date().toISOString().slice(0, 10)
-      }]);
+    try {
+      if (editAdmin) {
+        await updateAdminAccount(editAdmin.id, { name: form.name, role: form.role });
+        setAdmins(prev => prev.map(a => a.id === editAdmin.id ? { ...a, name: form.name, role: form.role } : a));
+      } else {
+        const created = await addAdminAccount(form.email, form.name, form.role);
+        setAdmins(prev => [...prev, created]);
+      }
+      setModal(false);
+    } catch (e) {
+      const msg = (e as Error).message ?? '';
+      if (msg.includes('user not found')) {
+        alert('해당 이메일 사용자가 없습니다. 먼저 로그인 화면에서 계정 만들기(가입)를 완료해야 합니다.');
+      } else {
+        alert('처리 실패: ' + msg);
+      }
     }
-    setModal(false);
   };
 
-  const toggle = (id: string) => {
-    setAdmins(prev => prev.map(a => a.id === id ? { ...a, status: a.status === '활성' ? '비활성' : '활성' } : a));
+  const toggle = async (id: string) => {
+    const target = admins.find(a => a.id === id);
+    if (!target) return;
+    try {
+      await updateAdminAccount(id, { isActive: target.status === '비활성' });
+      setAdmins(prev => prev.map(a => a.id === id ? { ...a, status: a.status === '활성' ? '비활성' : '활성' } : a));
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -68,6 +93,11 @@ export default function AdminAccounts() {
         </div>
 
         <div className="overflow-x-auto">
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-red-500">{loadError}</div>
+          ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-soft-gray/50">
@@ -104,6 +134,7 @@ export default function AdminAccounts() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
       </div>
 
@@ -129,7 +160,11 @@ export default function AdminAccounts() {
       <Modal open={modal} onClose={() => setModal(false)} title={editAdmin ? '관리자 수정' : '관리자 추가'}>
         <div className="space-y-3">
           <div><label className="text-xs text-gray-500 block mb-1">이름</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-          <div><label className="text-xs text-gray-500 block mb-1">이메일</label><input type="email" className="input" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">이메일</label>
+            <input type="email" className="input disabled:bg-gray-50 disabled:text-gray-400" value={form.email} disabled={!!editAdmin} onChange={e => setForm({ ...form, email: e.target.value })} />
+            {editAdmin && <p className="text-xs text-gray-400 mt-1">이메일은 인증 계정 식별자라 변경할 수 없습니다.</p>}
+          </div>
           <div>
             <label className="text-xs text-gray-500 block mb-1">권한</label>
             <select className="input" value={form.role} onChange={e => setForm({ ...form, role: e.target.value as AdminRole })}>

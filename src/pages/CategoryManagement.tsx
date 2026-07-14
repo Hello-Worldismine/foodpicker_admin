@@ -1,47 +1,69 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Edit2, Trash2, GripVertical } from 'lucide-react';
 import Modal from '../components/ui/Modal';
 import Switch from '../components/ui/Switch';
-import { mockCategories } from '../data/mockData';
+import { fetchCategories, createCategory, updateCategory } from '../lib/api';
 import type { Category } from '../types';
 
 /**
- * [백엔드 연동 안내] 현재 mockCategories(목데이터)로 동작 중. 실 DB에는 카테고리 테이블이 없고
- * `products.category`가 자유 텍스트 문자열로 저장됨(참조 무결성 없음).
- * 이 화면처럼 카테고리를 관리형 엔티티(순서/아이콘/활성화)로 운영하려면:
- * 1) categories 테이블 신설: (id, name, icon, display_order, active)
- * 2) products.category를 category_id FK로 바꾸는 마이그레이션 + 기존 문자열 값 매핑 작업 필요
- * API 예시: GET /api/admin/categories, POST /api/admin/categories, PATCH /api/admin/categories/:id (순서/활성화 포함)
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 조회: fetchCategories() — categories 테이블 + admin_products.category 집계로 productCount 포함.
+ * - 생성: createCategory(name, icon), 수정/활성화/비활성화: updateCategory(id, patch).
+ * - 삭제는 물리 삭제 대신 active=false 비활성화로 처리.
  */
 export default function CategoryManagement() {
-  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState(false);
   const [editCat, setEditCat] = useState<Category | null>(null);
   const [form, setForm] = useState({ name: '', icon: '' });
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchCategories()
+      .then(rows => { if (!cancelled) setCategories(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const openAdd = () => { setEditCat(null); setForm({ name: '', icon: '' }); setModal(true); };
   const openEdit = (c: Category) => { setEditCat(c); setForm({ name: c.name, icon: c.icon }); setModal(true); };
 
-  const save = () => {
+  const save = async () => {
     if (!form.name.trim()) return alert('카테고리명을 입력하세요.');
-    if (editCat) {
-      setCategories(prev => prev.map(c => c.id === editCat.id ? { ...c, ...form } : c));
-    } else {
-      setCategories(prev => [...prev, {
-        id: `c${Date.now()}`, name: form.name, icon: form.icon || '📦',
-        productCount: 0, active: true, order: prev.length + 1
-      }]);
+    try {
+      if (editCat) {
+        await updateCategory(editCat.id, { name: form.name, icon: form.icon });
+        setCategories(prev => prev.map(c => c.id === editCat.id ? { ...c, ...form } : c));
+      } else {
+        const created = await createCategory(form.name, form.icon);
+        setCategories(prev => [...prev, created]);
+      }
+      setModal(false);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
     }
-    setModal(false);
   };
 
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     if (!confirm('카테고리를 비활성화하시겠습니까?')) return;
-    setCategories(prev => prev.map(c => c.id === id ? { ...c, active: false } : c));
+    try {
+      await updateCategory(id, { active: false });
+      setCategories(prev => prev.map(c => c.id === id ? { ...c, active: false } : c));
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const toggle = (id: string) => {
-    setCategories(prev => prev.map(c => c.id === id ? { ...c, active: !c.active } : c));
+  const toggle = async (cat: Category) => {
+    try {
+      await updateCategory(cat.id, { active: !cat.active });
+      setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !cat.active } : c));
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -55,6 +77,11 @@ export default function CategoryManagement() {
           <button onClick={openAdd} className="btn-primary flex items-center gap-2"><Plus size={15} /> 카테고리 추가</button>
         </div>
 
+        {loading ? (
+          <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+        ) : loadError ? (
+          <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+        ) : (
         <div className="space-y-2">
           {categories.map((cat, idx) => (
             <div key={cat.id} className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${cat.active ? 'border-gray-100 bg-white hover:border-primary/30' : 'border-gray-100 bg-soft-gray opacity-60'}`}>
@@ -66,7 +93,7 @@ export default function CategoryManagement() {
               </div>
               <span className="text-xs text-gray-400">순서 {idx + 1}</span>
               <div className="flex items-center gap-2">
-                <Switch checked={cat.active} onChange={() => toggle(cat.id)} label={`${cat.name} 활성화 여부`} />
+                <Switch checked={cat.active} onChange={() => toggle(cat)} label={`${cat.name} 활성화 여부`} />
                 <button onClick={() => openEdit(cat)} className="text-gray-400 hover:text-primary transition-colors p-1">
                   <Edit2 size={15} />
                 </button>
@@ -77,6 +104,7 @@ export default function CategoryManagement() {
             </div>
           ))}
         </div>
+        )}
       </div>
 
       <Modal open={modal} onClose={() => setModal(false)} title={editCat ? '카테고리 수정' : '카테고리 추가'}>

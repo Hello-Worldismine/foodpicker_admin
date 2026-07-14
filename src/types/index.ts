@@ -26,7 +26,8 @@ export type ReviewStatus = '정상' | '숨김' | '삭제' | '신고검토' | '�
 export type AdminRole = '최고관리자' | '운영관리자' | '정산관리자' | 'CS관리자' | '읽기전용';
 
 export interface Seller {
-  id: string;
+  id: string; // stores.id (uuid)
+  sellerId: string; // auth.users id (stores.seller_id)
   storeName: string;
   ownerName: string;
   bizNumber: string;
@@ -102,7 +103,8 @@ export interface Order {
 }
 
 export interface Settlement {
-  id: string;
+  id: string; // 판매자×기간 그룹 키(클라이언트 파생 — DB settlements 는 주문 단위 행)
+  settlementIds: string[]; // 그룹에 포함된 settlements.id 목록(일괄 상태 변경용)
   sellerName: string;
   sellerId: string;
   bizNumber: string;
@@ -149,6 +151,8 @@ export interface Report {
 
 export interface Review {
   id: string;
+  productId?: string;
+  storeId?: string;
   productName: string;
   storeName: string;
   buyerName: string;

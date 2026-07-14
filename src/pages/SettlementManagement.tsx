@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, CheckCircle, Pause, RotateCcw } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
@@ -7,20 +7,27 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockSettlements } from '../data/mockData';
+import { fetchSettlements, setSettlementStatus } from '../lib/api';
 import type { Settlement, SettlementStatus } from '../types';
 
 const PAGE_SIZE = 6;
 
+/** 확정 시 정산예정일로 기록할 오늘 날짜(로컬 기준, YYYY-MM-DD) */
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /**
- * [백엔드 연동 안내] 현재 mockSettlements(목데이터)로 동작 중. 실 서비스는 Supabase `settlements` 테이블(판매자 앱과 공유)에 대응됨.
- * - 목록/검색: GET /api/admin/settlements?search=&status=&periodStart=&periodEnd=&page=
- * - 정산 확정: PATCH /api/admin/settlements/:id/confirm  (status→'completed', settled_on 기록)
- * - 정산 보류: PATCH /api/admin/settlements/:id/hold  { reason }  (status→'on_hold')
- * - platformFee/pgFee는 정산 배치(주간 배치, migration의 weekly settlement batch 참고)가 계산해 내려주는 값으로 관리자는 조회만 한다.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 목록: api.fetchSettlements() — `admin_settlements` 뷰를 판매자×기간 그룹으로 집계(id=그룹키, settlementIds=원본 행 id 배열).
+ * - 확정/보류/해제: api.setSettlementStatus(settlementIds, 상태, memo?) — `admin_set_settlement_status` RPC(감사 로그 자동 기록).
+ * - platformFee/pgFee는 정산 배치(주간 배치)가 계산해 내려주는 값으로 관리자는 조회만 한다.
  */
 export default function SettlementManagement() {
-  const [settlements, setSettlements] = useState<Settlement[]>(mockSettlements);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<SettlementStatus | '전체'>('전체');
   const [dateFrom, setDateFrom] = useState('');
@@ -30,6 +37,15 @@ export default function SettlementManagement() {
   const [holdModal, setHoldModal] = useState(false);
   const [holdReason, setHoldReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSettlements()
+      .then(rows => { if (!cancelled) setSettlements(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const HOLD_REASONS = [
     '환불 분쟁 확인 필요',
@@ -50,27 +66,55 @@ export default function SettlementManagement() {
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const updateStatus = (id: string, status: SettlementStatus, memo?: string) => {
-    setSettlements(prev => prev.map(s => s.id === id ? { ...s, status, memo: memo ?? s.memo } : s));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+  /** 서버 반영 성공 후 로컬 상태 병합(status/memo, 확정 시 scheduledDate) */
+  const updateStatus = (id: string, status: SettlementStatus, memo?: string, scheduledDate?: string) => {
+    const merge = (s: Settlement): Settlement => ({
+      ...s, status, memo: memo ?? s.memo, scheduledDate: scheduledDate ?? s.scheduledDate,
+    });
+    setSettlements(prev => prev.map(s => s.id === id ? merge(s) : s));
+    setSelected(prev => prev && prev.id === id ? merge(prev) : prev);
   };
 
-  const handleConfirm = (s: Settlement) => {
+  const handleConfirm = async (s: Settlement) => {
     if (s.status === '보류') return alert('보류 상태에서는 정산 확정이 불가합니다.');
-    updateStatus(s.id, '정산완료');
-    alert('정산이 확정되었습니다. (로그 기록됨)');
+    try {
+      await setSettlementStatus(s.settlementIds, '정산완료');
+      updateStatus(s.id, '정산완료', undefined, todayStr());
+      alert('정산이 확정되었습니다. (로그 기록됨)');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleUnconfirm = (s: Settlement) => {
+  const handleUnconfirm = async (s: Settlement) => {
     if (!confirm(`${s.sellerName}의 정산 확정을 취소하고 "정산예정" 상태로 되돌리시겠습니까?`)) return;
-    updateStatus(s.id, '정산예정');
+    try {
+      await setSettlementStatus(s.settlementIds, '정산예정');
+      updateStatus(s.id, '정산예정');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleHold = () => {
+  const handleRelease = async (s: Settlement) => {
+    try {
+      await setSettlementStatus(s.settlementIds, '정산예정');
+      updateStatus(s.id, '정산예정');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
+  };
+
+  const handleHold = async () => {
     if (!selected || !holdReason.trim()) return alert('보류 사유를 선택/입력하세요.');
-    updateStatus(selected.id, '보류', holdReason);
-    setHoldModal(false);
-    setHoldReason('');
+    try {
+      await setSettlementStatus(selected.settlementIds, '보류', holdReason);
+      updateStatus(selected.id, '보류', holdReason);
+      setHoldModal(false);
+      setHoldReason('');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   const handleExcelDownload = () => {
@@ -169,7 +213,11 @@ export default function SettlementManagement() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.length === 0 ? (
+                {loading ? (
+                  <tr><td colSpan={9}><div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div></td></tr>
+                ) : loadError ? (
+                  <tr><td colSpan={9}><div className="py-16 text-center text-sm text-alert-red">{loadError}</div></td></tr>
+                ) : paginated.length === 0 ? (
                   <tr><td colSpan={9}><EmptyState /></td></tr>
                 ) : paginated.map(s => (
                   <tr
@@ -197,7 +245,7 @@ export default function SettlementManagement() {
                         </div>
                       )}
                       {s.status === '보류' && (
-                        <button onClick={e => { e.stopPropagation(); updateStatus(s.id, '정산예정'); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-primary text-white hover:bg-primary-dark transition-colors">
+                        <button onClick={e => { e.stopPropagation(); handleRelease(s); }} className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-primary text-white hover:bg-primary-dark transition-colors">
                           <RotateCcw size={12} /> 보류 해제
                         </button>
                       )}
@@ -240,7 +288,7 @@ export default function SettlementManagement() {
                 </div>
               )}
               {selected.status === '보류' && (
-                <button onClick={() => updateStatus(selected.id, '정산예정')} className="btn-primary w-full text-xs flex items-center justify-center gap-1">
+                <button onClick={() => handleRelease(selected)} className="btn-primary w-full text-xs flex items-center justify-center gap-1">
                   <RotateCcw size={13} /> 보류 해제
                 </button>
               )}

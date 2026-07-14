@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -7,50 +8,120 @@ import {
   TrendingUp, ShoppingCart, XCircle,
   Store, Flag, CreditCard, AlertTriangle, ArrowRight
 } from 'lucide-react';
-import {
-  mockDailyOrders, mockCategoryStats,
-  mockHourlyPickups
-} from '../data/mockData';
+import { fetchDashboardStats } from '../lib/api';
 
 const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'];
 
 /**
- * [백엔드 연동 안내] statCards/alerts/차트 데이터가 모두 하드코딩된 예시값. 실 연동 시 집계 API 필요:
- * - GET /api/admin/dashboard/summary → 오늘 거래액/주문수/픽업완료/취소/신규판매자/신고/정산보류 건수 (orders/stores/reports/settlements 집계)
- * - GET /api/admin/dashboard/daily-orders?days=7 → 일별 주문수/거래액 (차트용)
- * - GET /api/admin/dashboard/alerts → "운영 주의 알림" 피드(소비기한 임박, 신고 누적 매장, 정산 보류 등 여러 도메인을 조합한 결과이므로
- *   프론트에서 여러 API를 합치기보다 백엔드에서 하나의 알림 피드로 합쳐 내려주는 것을 권장)
- * 집계 쿼리는 실시간 계산 비용이 크므로 배치/캐시(예: 5분 주기 머티리얼라이즈드 뷰) 설계를 권장.
+ * [백엔드 연동 안내] Supabase RPC `admin_dashboard_stats`(api.fetchDashboardStats) 실데이터 연동 완료.
+ * 통계 카드/차트/운영 주의 알림 모두 이 jsonb 집계 결과를 사용한다.
+ * 전일 대비 증감(%/건)·취소율·예상 폐기 감소량(완료 수량 × 0.25kg 추정)은 클라이언트에서 계산.
  */
-const statCards = [
-  { label: '신규 판매자 신청', value: '8건', icon: Store, color: 'text-warm-orange', bg: 'bg-orange-50', sub: '검토 필요' },
-  { label: '오늘 거래액', value: '1,284,000원', icon: TrendingUp, color: 'text-primary', bg: 'bg-primary-light', sub: '어제 대비 +12%' },
-  { label: '오늘 주문 수', value: '245건', icon: ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50', sub: '어제 대비 +8' },
-  { label: '오늘 취소', value: '12건', icon: XCircle, color: 'text-alert-red', bg: 'bg-red-50', sub: '취소율 4.9%' },
-  { label: '신고 접수', value: '3건', icon: Flag, color: 'text-alert-red', bg: 'bg-red-50', sub: '미처리 2건' },
-  { label: '정산 보류', value: '1건', icon: CreditCard, color: 'text-purple-600', bg: 'bg-purple-50', sub: '확인 필요' },
-];
+interface DailyPoint {
+  date: string;
+  orders: number;
+  revenue: number;
+  completedQty: number;
+}
 
-const alerts = [
-  { text: '소비기한 경과 상품 등록 시도 3건', path: '/products', severity: 'high' },
-  { text: '신고 누적 판매자 2곳 (맛있는반찬, 기타매장)', path: '/sellers', severity: 'high' },
-  { text: '정산 보류 1건 - 맛있는반찬', path: '/settlements', severity: 'medium' },
-  { text: '취소율 높은 매장 1곳 - 신선도시락 (15%)', path: '/sellers', severity: 'medium' },
-  { text: '미처리 신고/문의 2건', path: '/reports', severity: 'low' },
-];
+interface DashboardData {
+  todayRevenue: number;
+  yesterdayRevenue: number;
+  todayOrders: number;
+  yesterdayOrders: number;
+  todayPickups: number;
+  todayCancels: number;
+  newSellerApps: number;
+  newReportsToday: number;
+  unresolvedReports: number;
+  pendingSettlements: number;
+  onHoldStores: string[];
+  expiryPausedCount: number;
+  daily: DailyPoint[];
+  categoryStats: { name: string; value: number }[];
+  hourlyPickups: { hour: string; count: number }[];
+  highCancelStores: { name: string; rate: number }[];
+}
 
-const wasteReductionData = [
-  { date: '06/09', kg: 42 },
-  { date: '06/10', kg: 48 },
-  { date: '06/11', kg: 45 },
-  { date: '06/12', kg: 53 },
-  { date: '06/13', kg: 58 },
-  { date: '06/14', kg: 51 },
-  { date: '06/15', kg: 62 },
-];
+interface AlertItem {
+  text: string;
+  path: string;
+  severity: 'high' | 'medium' | 'low';
+}
+
+function revenueDiffLabel(today: number, yesterday: number): string {
+  if (yesterday === 0) return '-';
+  const pct = Math.round(((today - yesterday) / yesterday) * 100);
+  return `어제 대비 ${pct >= 0 ? '+' : ''}${pct}%`;
+}
+
+function orderDiffLabel(today: number, yesterday: number): string {
+  if (yesterday === 0) return '-';
+  const diff = today - yesterday;
+  return `어제 대비 ${diff >= 0 ? '+' : ''}${diff}건`;
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [stats, setStats] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDashboardStats()
+      .then(data => { if (!cancelled) setStats(data as DashboardData); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>;
+  }
+  if (loadError || !stats) {
+    return <div className="py-16 text-center text-sm text-alert-red">{loadError || '데이터를 불러오지 못했습니다.'}</div>;
+  }
+
+  const cancelRateLabel = stats.todayOrders === 0
+    ? '-'
+    : `취소율 ${((stats.todayCancels / stats.todayOrders) * 100).toFixed(1)}%`;
+
+  const statCards = [
+    { label: '신규 판매자 신청', value: `${stats.newSellerApps}건`, icon: Store, color: 'text-warm-orange', bg: 'bg-orange-50', sub: stats.newSellerApps > 0 ? '검토 필요' : '대기 없음' },
+    { label: '오늘 거래액', value: `${stats.todayRevenue.toLocaleString()}원`, icon: TrendingUp, color: 'text-primary', bg: 'bg-primary-light', sub: revenueDiffLabel(stats.todayRevenue, stats.yesterdayRevenue) },
+    { label: '오늘 주문 수', value: `${stats.todayOrders}건`, icon: ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50', sub: orderDiffLabel(stats.todayOrders, stats.yesterdayOrders) },
+    { label: '오늘 취소', value: `${stats.todayCancels}건`, icon: XCircle, color: 'text-alert-red', bg: 'bg-red-50', sub: cancelRateLabel },
+    { label: '신고 접수', value: `${stats.newReportsToday}건`, icon: Flag, color: 'text-alert-red', bg: 'bg-red-50', sub: `미처리 ${stats.unresolvedReports}건` },
+    { label: '정산 보류', value: `${stats.pendingSettlements}건`, icon: CreditCard, color: 'text-purple-600', bg: 'bg-purple-50', sub: stats.pendingSettlements > 0 ? '확인 필요' : '이상 없음' },
+  ];
+
+  const wasteReductionData = stats.daily.map(d => ({
+    date: d.date,
+    kg: Math.round(d.completedQty * 0.25 * 10) / 10,
+  }));
+
+  const onHoldStores = stats.onHoldStores ?? [];
+  const alerts: AlertItem[] = [];
+  if (stats.expiryPausedCount > 0) {
+    alerts.push({ text: `소비기한 경과로 판매 중지된 상품 ${stats.expiryPausedCount}건`, path: '/products', severity: 'high' });
+  }
+  if (stats.newSellerApps > 0) {
+    alerts.push({ text: `신규 판매자 신청 ${stats.newSellerApps}건 검토 필요`, path: '/sellers', severity: stats.newSellerApps >= 5 ? 'high' : 'medium' });
+  }
+  if (stats.pendingSettlements > 0) {
+    alerts.push({
+      text: `정산 보류 ${stats.pendingSettlements}건${onHoldStores.length > 0 ? ` - ${onHoldStores.join(', ')}` : ''}`,
+      path: '/settlements',
+      severity: 'medium',
+    });
+  }
+  (stats.highCancelStores ?? []).forEach(s => {
+    alerts.push({ text: `취소율 높은 매장 - ${s.name} (${s.rate}%)`, path: '/orders', severity: 'medium' });
+  });
+  if (stats.unresolvedReports > 0) {
+    alerts.push({ text: `미처리 신고/문의 ${stats.unresolvedReports}건`, path: '/reports', severity: stats.unresolvedReports >= 3 ? 'medium' : 'low' });
+  }
 
   return (
     <div className="space-y-6">
@@ -73,7 +144,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-charcoal mb-4">일별 주문 수 (최근 7일)</h2>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={mockDailyOrders} barSize={24}>
+            <BarChart data={stats.daily} barSize={24}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
@@ -86,7 +157,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-charcoal mb-4">일별 거래액 (최근 7일)</h2>
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={mockDailyOrders}>
+            <AreaChart data={stats.daily}>
               <defs>
                 <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#22A06B" stopOpacity={0.15} />
@@ -109,8 +180,8 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-charcoal mb-4">카테고리별 판매량</h2>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
-              <Pie data={mockCategoryStats} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
-                {mockCategoryStats.map((_, i) => (
+              <Pie data={stats.categoryStats} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
+                {stats.categoryStats.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}
               </Pie>
@@ -122,7 +193,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-charcoal mb-4">시간대별 픽업량</h2>
           <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={mockHourlyPickups}>
+            <LineChart data={stats.hourlyPickups}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 12 }} />
@@ -160,6 +231,9 @@ export default function Dashboard() {
           운영 주의 알림
         </h2>
         <div className="space-y-2">
+          {alerts.length === 0 && (
+            <p className="px-4 py-3 text-sm text-gray-400">현재 주의가 필요한 알림이 없습니다.</p>
+          )}
           {alerts.map((alert, i) => (
             <button
               key={i}

@@ -1,69 +1,118 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Plus, Edit2, ImagePlus, X } from 'lucide-react';
 import Modal from '../components/ui/Modal';
 import Switch from '../components/ui/Switch';
-import { mockBanners, mockNotices } from '../data/mockData';
+import {
+  fetchBanners, createBanner, updateBanner, toggleBannerActive, uploadBannerImage,
+  fetchNotices, createNotice, updateNotice, toggleNoticeActive,
+} from '../lib/api';
 import type { Banner, Notice } from '../types';
 
 /**
- * [백엔드 연동 안내] 현재 mockBanners/mockNotices(목데이터)로 동작 중.
- * - 공지(Notice)는 실 DB `notices` 테이블이 존재함: GET /api/admin/notices, POST /api/admin/notices, PATCH /api/admin/notices/:id
- *   단, 실 테이블 컬럼은 (notice_code, emoji, title, content, published_at, is_published)뿐이라
- *   관리자 화면의 target(전체/사용자/판매자)·startDate/endDate·important는 컬럼 추가 마이그레이션이 선행되어야 함.
- * - 배너(Banner)는 실 DB에 대응 테이블이 아예 없음(신규 설계 필요).
- *   제안 스키마: banners(id, title, image_url, link, position, start_date, end_date, active, created_at)
- *   API 예시: GET /api/admin/banners, POST /api/admin/banners, PATCH /api/admin/banners/:id
- * - 이미지 업로드: 지금은 브라우저에서 base64로 미리보기만 하는 상태. 실 연동 시 Supabase Storage(배너 전용 버킷)에
- *   업로드 후 반환된 public URL을 image_url에 저장하는 방식으로 교체할 것.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 배너: `banners` 테이블 — fetchBanners / createBanner / updateBanner / toggleBannerActive
+ * - 공지: `notices` 테이블 — fetchNotices / createNotice / updateNotice / toggleNoticeActive
+ * - 이미지: 파일 선택 즉시 Supabase Storage `banner-images` 버킷에 업로드(uploadBannerImage)하고
+ *   반환된 public URL을 image_url로 저장한다.
  * - 배너 권장 비율(2.14:1)은 foodpicker_app(사용자 앱) HomeScreen.js의 배너 슬롯 크기
- *   (화면 너비 - 좌우 패딩 32px, 높이 160px)에서 역산한 값이다. 실제 배너 이미지가 아닌 그라디언트+이모지로
- *   렌더링되고 있으므로, 사용자 앱에서 이 이미지를 실제로 표시하려면 해당 화면도 함께 수정이 필요하다.
+ *   (화면 너비 - 좌우 패딩 32px, 높이 160px)에서 역산한 값이다. 사용자 앱은 아직 그라디언트+이모지로
+ *   렌더링되고 있으므로, 실제 배너 이미지를 표시하려면 해당 화면도 함께 수정이 필요하다.
  */
 const BANNER_ASPECT = 1200 / 560; // ≈ 2.14:1 — 사용자 앱 메인 배너 슬롯 비율
 
 export default function BannerManagement() {
   const [tab, setTab] = useState<'banner' | 'notice'>('banner');
-  const [banners, setBanners] = useState<Banner[]>(mockBanners);
-  const [notices, setNotices] = useState<Notice[]>(mockNotices);
+  const [banners, setBanners] = useState<Banner[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [bannerModal, setBannerModal] = useState(false);
   const [noticeModal, setNoticeModal] = useState(false);
   const [editBanner, setEditBanner] = useState<Banner | null>(null);
   const [editNotice, setEditNotice] = useState<Notice | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [bForm, setBForm] = useState({ title: '', link: '', position: '메인 상단', startDate: '', endDate: '', imageUrl: '' });
   const [nForm, setNForm] = useState({ title: '', content: '', target: '전체' as Notice['target'], startDate: '', endDate: '', important: false });
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchBanners(), fetchNotices()])
+      .then(([bs, ns]) => { if (!cancelled) { setBanners(bs); setNotices(ns); } })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const openBannerAdd = () => { setEditBanner(null); setBForm({ title: '', link: '', position: '메인 상단', startDate: '', endDate: '', imageUrl: '' }); setBannerModal(true); };
   const openNoticeAdd = () => { setEditNotice(null); setNForm({ title: '', content: '', target: '전체', startDate: '', endDate: '', important: false }); setNoticeModal(true); };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setBForm(prev => ({ ...prev, imageUrl: reader.result as string }));
-    reader.readAsDataURL(file);
+    setImageUploading(true);
+    try {
+      const url = await uploadBannerImage(file);
+      setBForm(prev => ({ ...prev, imageUrl: url }));
+    } catch (err) {
+      alert('이미지 업로드 실패: ' + (err as Error).message);
+    } finally {
+      setImageUploading(false);
+    }
   };
 
-  const saveBanner = () => {
+  const saveBanner = async () => {
     if (!bForm.title) return alert('배너 제목을 입력하세요.');
+    if (imageUploading) return alert('이미지 업로드가 끝난 뒤 저장하세요.');
     if (!bForm.imageUrl) return alert('배너 이미지를 등록하세요.');
-    if (editBanner) {
-      setBanners(prev => prev.map(b => b.id === editBanner.id ? { ...b, ...bForm } : b));
-    } else {
-      setBanners(prev => [...prev, { id: `b${Date.now()}`, ...bForm, active: true }]);
+    try {
+      if (editBanner) {
+        const updated = await updateBanner(editBanner.id, bForm);
+        setBanners(prev => prev.map(b => b.id === updated.id ? updated : b));
+      } else {
+        const created = await createBanner(bForm);
+        setBanners(prev => [created, ...prev]);
+      }
+      setBannerModal(false);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
     }
-    setBannerModal(false);
   };
 
-  const saveNotice = () => {
+  const saveNotice = async () => {
     if (!nForm.title) return alert('공지 제목을 입력하세요.');
-    if (editNotice) {
-      setNotices(prev => prev.map(n => n.id === editNotice.id ? { ...n, ...nForm } : n));
-    } else {
-      setNotices(prev => [...prev, { id: `n${Date.now()}`, ...nForm, active: true, createdAt: new Date().toISOString().slice(0, 10) }]);
+    try {
+      if (editNotice) {
+        const updated = await updateNotice(editNotice.id, nForm);
+        setNotices(prev => prev.map(n => n.id === updated.id ? updated : n));
+      } else {
+        const created = await createNotice(nForm);
+        setNotices(prev => [created, ...prev]);
+      }
+      setNoticeModal(false);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
     }
-    setNoticeModal(false);
+  };
+
+  const handleToggleBanner = async (b: Banner) => {
+    try {
+      await toggleBannerActive(b.id, !b.active);
+      setBanners(prev => prev.map(x => x.id === b.id ? { ...x, active: !b.active } : x));
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
+  };
+
+  const handleToggleNotice = async (n: Notice) => {
+    try {
+      await toggleNoticeActive(n.id, !n.active);
+      setNotices(prev => prev.map(x => x.id === n.id ? { ...x, active: !n.active } : x));
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -83,6 +132,11 @@ export default function BannerManagement() {
             <h2 className="font-semibold">배너 목록</h2>
             <button onClick={openBannerAdd} className="btn-primary flex items-center gap-2"><Plus size={15} /> 배너 추가</button>
           </div>
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+          ) : (
           <div className="space-y-3">
             {banners.map(b => (
               <div key={b.id} className="flex items-center gap-4 p-4 rounded-xl border border-gray-100 hover:border-primary/30 transition-colors">
@@ -100,7 +154,7 @@ export default function BannerManagement() {
                 <div className="flex items-center gap-3">
                   <Switch
                     checked={b.active}
-                    onChange={() => setBanners(prev => prev.map(x => x.id === b.id ? { ...x, active: !x.active } : x))}
+                    onChange={() => handleToggleBanner(b)}
                     label={`${b.title} 활성화 여부`}
                   />
                   <button onClick={() => { setEditBanner(b); setBForm({ title: b.title, link: b.link, position: b.position, startDate: b.startDate, endDate: b.endDate, imageUrl: b.imageUrl }); setBannerModal(true); }} className="text-gray-400 hover:text-primary">
@@ -110,6 +164,7 @@ export default function BannerManagement() {
               </div>
             ))}
           </div>
+          )}
         </div>
       ) : (
         <div className="card p-5">
@@ -117,6 +172,11 @@ export default function BannerManagement() {
             <h2 className="font-semibold">공지 목록</h2>
             <button onClick={openNoticeAdd} className="btn-primary flex items-center gap-2"><Plus size={15} /> 공지 추가</button>
           </div>
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+          ) : (
           <div className="space-y-3">
             {notices.map(n => (
               <div key={n.id} className="flex items-start gap-4 p-4 rounded-xl border border-gray-100 hover:border-primary/30 transition-colors">
@@ -131,7 +191,7 @@ export default function BannerManagement() {
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <Switch
                     checked={n.active}
-                    onChange={() => setNotices(prev => prev.map(x => x.id === n.id ? { ...x, active: !x.active } : x))}
+                    onChange={() => handleToggleNotice(n)}
                     label={`${n.title} 활성화 여부`}
                   />
                   <button onClick={() => { setEditNotice(n); setNForm({ title: n.title, content: n.content, target: n.target, startDate: n.startDate, endDate: n.endDate, important: n.important }); setNoticeModal(true); }} className="text-gray-400 hover:text-primary">
@@ -141,6 +201,7 @@ export default function BannerManagement() {
               </div>
             ))}
           </div>
+          )}
         </div>
       )}
 
@@ -153,9 +214,14 @@ export default function BannerManagement() {
             <div
               className="relative w-full rounded-lg overflow-hidden bg-soft-gray border border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-primary transition-colors"
               style={{ aspectRatio: BANNER_ASPECT }}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => { if (!imageUploading) fileInputRef.current?.click(); }}
             >
-              {bForm.imageUrl ? (
+              {imageUploading ? (
+                <div className="flex flex-col items-center gap-1 text-gray-400">
+                  <ImagePlus size={24} className="animate-pulse" />
+                  <span className="text-xs">이미지 업로드 중...</span>
+                </div>
+              ) : bForm.imageUrl ? (
                 <>
                   <img src={bForm.imageUrl} alt="배너 미리보기" className="w-full h-full object-cover" />
                   <button

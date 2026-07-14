@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, MessageSquare, History, Lock, ChevronDown, ArrowLeft, PlayCircle, ImageIcon } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
@@ -7,7 +7,8 @@ import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import Lightbox from '../components/ui/Lightbox';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockReports } from '../data/mockData';
+import { useAdmin } from '../context/AdminContext';
+import { fetchReports, fetchReportLogs, updateReport, addReportLog, reportRefund } from '../lib/api';
 import type { Report, ReportStatus, InquirerType } from '../types';
 
 const USER_REPORT_TYPES = [
@@ -55,29 +56,21 @@ const SELLER_REPLY_TEMPLATES = [
 ];
 
 /**
- * [백엔드 연동 안내] 현재 mockReports(목데이터)로만 동작하며, 실 DB에는 신고/문의를 저장할 테이블이 아직 없음(신규 설계 필요).
- * 제안 스키마: reports(id, receipt_code, inquirer_type, type, order_id FK NULL 허용, buyer_id FK NULL 허용,
- *   seller_id FK, title, content, status, manager_id FK, created_at, updated_at)
- * + 처리 이력(logs state)은 report_activity_logs(report_id, admin_id, message, created_at) 같은 별도 테이블 또는 감사로그 테이블 재사용 권장.
- * API 예시:
- * - GET /api/admin/reports?inquirerType=&search=&type=&status=&page=
- * - PATCH /api/admin/reports/:id/status  { status }
- * - POST /api/admin/reports/:id/reply  { content }  → 처리 이력에 기록
- * - POST /api/admin/reports/:id/refund  → orders/settlements 쪽 환불 플로우와 연동 필요(사용자 문의에만 해당)
- * - 판매자 1:1 문의는 판매자 앱에 문의 작성 화면이 신규로 필요: POST /api/seller/inquiries { type, title, content }
- *   (buyer_id/order_id 없이 seller_id만으로 생성됨). 사용자 문의는 기존처럼 주문 상세에서 신고하기로 생성.
- * - 과거 문의/신고 이력: 지금은 이미 불러온 reports 배열에서 client-side로 매칭해 계산 중(사용자 문의는 buyerName,
- *   판매자 문의는 sellerName 기준). 실 연동 시엔 목록이 페이지네이션되므로 GET /api/admin/reports?buyerId=/sellerId=&excludeId=
- *   같은 전용 조회가 필요함(문자열 이름 매칭은 동명이인 오탐 위험이 있으므로 buyer_id/seller_id로 매칭할 것).
- * - 내부 메모(memo): 고객/판매자에게 절대 노출되면 안 되는 CS 전용 비공개 필드. 사용자/판매자 앱 응답에는 포함하지 말 것.
- * - 답변 템플릿(USER_REPLY_TEMPLATES/SELLER_REPLY_TEMPLATES)은 현재 프론트에 하드코딩. 운영팀이 직접 문구를
- *   추가/수정하게 하려면 reply_templates(id, inquirer_type, label, content) 테이블 + 관리 화면이 별도로 필요.
- * - evidence(증빙 사진/영상)도 실 DB에 컬럼이 없음 — report_evidence(report_id, type, url, created_at) 같은
- *   별도 테이블 + Supabase Storage 연동이 필요. 사용자 앱에서 여러 장 업로드를 지원해야 하므로 1:N 관계로 설계할 것.
+ * [백엔드 연동 안내] Supabase 실연동 완료.
+ * - 목록/이력: reports · report_logs 테이블 (fetchReports / fetchReportLogs)
+ * - 상태 변경·담당자 배정·내부 메모: updateReport(직접 UPDATE) + addReportLog 로 처리 이력 기록
+ * - 환불: admin_report_refund RPC(reportRefund) — 서버가 환불 처리와 refund 로그를 자동 기록
+ * - 내부 메모(admin_memo)는 CS 전용 비공개 필드 — 사용자/판매자 앱 응답에 노출 금지.
+ * - 답변 템플릿(USER/SELLER_REPLY_TEMPLATES)은 프론트 하드코딩 — 운영팀 직접 관리가 필요해지면
+ *   reply_templates 테이블 + 관리 화면 별도 필요.
+ * - 과거 문의/신고 이력은 불러온 목록에서 buyerName/sellerName 문자열로 클라이언트 매칭 중
+ *   (동명이인 오탐 가능 — buyer_id/seller_id 기준 전용 조회로 개선 여지).
  */
 
 export default function ReportManagement() {
-  const [reports, setReports] = useState<Report[]>(mockReports);
+  const [reports, setReports] = useState<Report[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState<InquirerType>('사용자');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('전체');
@@ -92,6 +85,20 @@ export default function ReportManagement() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [logs, setLogs] = useState<Record<string, string[]>>({});
   const { download, isLoading, toast: xlsxToast, canDownload } = useExcelDownload();
+  const { currentAdmin } = useAdmin();
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchReports(), fetchReportLogs()])
+      .then(([rows, logMap]) => {
+        if (cancelled) return;
+        setReports(rows);
+        setLogs(logMap);
+      })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const openReport = (r: Report) => {
     setSelected(r);
@@ -187,18 +194,37 @@ export default function ReportManagement() {
     });
   };
 
-  const updateStatus = (id: string, status: ReportStatus, logMsg?: string) => {
-    setReports(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
-    if (logMsg) {
-      setLogs(prev => ({ ...prev, [id]: [...(prev[id] ?? []), `[${new Date().toLocaleString('ko-KR')}] ${logMsg}`] }));
-    }
+  const appendLocalLog = (id: string, msg: string) => {
+    setLogs(prev => ({ ...prev, [id]: [...(prev[id] ?? []), `[${new Date().toLocaleString('ko-KR')}] ${msg} (${currentAdmin.name})`] }));
   };
 
-  const handleReply = () => {
+  const updateStatus = async (id: string, status: ReportStatus, logMsg?: string): Promise<boolean> => {
+    // 담당자가 아직 미배정이면 처리하는 관리자를 담당자로 배정한다.
+    const target = reports.find(r => r.id === id);
+    const manager = target && target.manager !== '미배정' ? target.manager : currentAdmin.name;
+    try {
+      await updateReport(id, { status, manager });
+      if (logMsg) await addReportLog(id, currentAdmin.name, 'status', logMsg);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+      return false;
+    }
+    setReports(prev => prev.map(r => r.id === id ? { ...r, status, manager } : r));
+    setSelected(prev => prev && prev.id === id ? { ...prev, status, manager } : prev);
+    if (logMsg) appendLocalLog(id, logMsg);
+    return true;
+  };
+
+  const handleReply = async () => {
     if (!selected || !replyText.trim()) return alert('답변 내용을 입력하세요.');
     const msg = `답변 등록: ${replyText}`;
-    updateStatus(selected.id, selected.status, msg);
+    try {
+      await addReportLog(selected.id, currentAdmin.name, 'reply', msg);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+      return;
+    }
+    appendLocalLog(selected.id, msg);
     setReplyText('');
     setTemplateChoice('');
     alert('답변이 등록되었습니다.');
@@ -210,21 +236,39 @@ export default function ReportManagement() {
     setTemplateChoice('');
   };
 
-  const saveMemo = () => {
+  const saveMemo = async () => {
     if (!selected) return;
-    setReports(prev => prev.map(r => r.id === selected.id ? { ...r, memo: internalMemo } : r));
-    setSelected(prev => prev ? { ...prev, memo: internalMemo } : null);
+    const id = selected.id;
+    try {
+      await updateReport(id, { memo: internalMemo });
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+      return;
+    }
+    setReports(prev => prev.map(r => r.id === id ? { ...r, memo: internalMemo } : r));
+    setSelected(prev => prev && prev.id === id ? { ...prev, memo: internalMemo } : prev);
   };
 
-  const handleClose = () => {
+  const handleClose = async () => {
     if (!selected) return;
-    updateStatus(selected.id, '종결', '관리자 종결 처리');
-    alert('신고/문의가 종결 처리되었습니다.');
+    if (await updateStatus(selected.id, '종결', '관리자 종결 처리')) {
+      alert('신고/문의가 종결 처리되었습니다.');
+    }
   };
 
-  const handleRefund = () => {
+  const handleRefund = async () => {
     if (!selected) return;
-    updateStatus(selected.id, '환불 처리', '환불 처리 완료');
+    const id = selected.id;
+    try {
+      // 서버(admin_report_refund RPC)가 환불 처리 + refund 로그를 자동 기록하므로 addReportLog 를 중복 호출하지 않는다.
+      await reportRefund(id);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+      return;
+    }
+    setReports(prev => prev.map(r => r.id === id ? { ...r, status: '환불 처리' } : r));
+    setSelected(prev => prev && prev.id === id ? { ...prev, status: '환불 처리' } : prev);
+    appendLocalLog(id, '환불 처리 완료');
     alert('환불 처리되었습니다.');
   };
 
@@ -264,6 +308,12 @@ export default function ReportManagement() {
 
       <div className="flex gap-4">
         <div className={`card flex-1 overflow-hidden ${selected ? 'hidden xl:block' : ''}`}>
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-red-500">{loadError}</div>
+          ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -306,6 +356,8 @@ export default function ReportManagement() {
           <div className="px-4">
             <Pagination page={page} totalPages={Math.ceil(filtered.length / PAGE_SIZE)} onPageChange={setPage} totalItems={filtered.length} pageSize={PAGE_SIZE} />
           </div>
+          </>
+          )}
         </div>
 
         {/* Detail Panel */}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Star, ImageIcon } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
@@ -6,7 +6,7 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockReviews } from '../data/mockData';
+import { fetchReviews, moderateReview } from '../lib/api';
 import type { Review, ReviewStatus } from '../types';
 
 const PAGE_SIZE = 7;
@@ -16,18 +16,12 @@ const isDeleted = (s: ReviewStatus) => s === '삭제' || s === '신고검토-삭
 const isPendingReview = (s: ReviewStatus) => s === '신고검토';
 
 /**
- * [백엔드 연동 안내] 현재 mockReviews(목데이터)로 동작 중. 실 서비스는 Supabase `reviews` 테이블(판매자 앱과 공유)에 대응됨.
- * - 목록/검색: GET /api/admin/reviews?search=&status=&page=
- * - ownerReply/ownerRepliedAt은 실 DB 컬럼(owner_reply, owner_replied_at)이 그대로 존재하므로 조회만 하면 됨.
- * ⚠️ status(정상/숨김/삭제/신고검토/신고검토-정상/신고검토-숨김/신고검토-삭제) 모더레이션 상태와 reportCount(신고수)는
- *    실 DB `reviews` 테이블에 대응 컬럼이 없음. 실 연동 전 백엔드에서 moderation_status, report_count 컬럼 추가
- *    또는 별도 review_reports 테이블 설계가 선행되어야 함.
- *    신고검토-* 3종은 "신고가 접수되어 검토를 거친 뒤의 결과"임을 구분하기 위한 값으로, 정상/숨김/삭제와 실제
- *    노출 동작은 동일하다(접두어 없는 값은 신고 없이 관리자가 바로 조치한 경우). 통계/감사 목적의 구분이므로
- *    moderation_status ENUM에 이 7개 값을 그대로 두거나, is_reported(boolean) + status(정상|숨김|삭제|신고검토) 조합으로
- *    설계해도 무방하다.
- * ⚠️ images(리뷰 사진)도 실 DB에 컬럼이 없음 — 사용자 앱에서 첨부 업로드를 지원하려면 reviews.images(text[]) 컬럼 추가 +
- *    Supabase Storage 버킷 연동이 선행되어야 함. 관리자는 신고 처리 시 증빙 사진 확인 용도로 조회만 하면 된다.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 목록: `admin_reviews` 뷰 조회(fetchReviews) — product_name/store_name/reviewer_name/report_count 등 뷰 전용 필드 포함.
+ * - 모더레이션/메모: `admin_moderate_review` RPC(moderateReview) — 상태 7종(정상/숨김/삭제/신고검토/신고검토-*)과
+ *   관리자 메모를 서버에 기록하며 감사 로그도 서버에서 자동 남김. RPC 반환 행에는 뷰 전용 필드가 없을 수 있으므로
+ *   로컬 상태에는 변경 필드(status/memo)만 스프레드 병합한다.
+ * - 신고검토-* 3종은 "신고 접수 후 검토를 거친 결과"를 구분하기 위한 값으로, 정상/숨김/삭제와 실제 노출 동작은 동일.
  */
 
 function Stars({ rating }: { rating: number }) {
@@ -41,13 +35,30 @@ function Stars({ rating }: { rating: number }) {
 }
 
 export default function ReviewManagement() {
-  const [reviews, setReviews] = useState<Review[]>(mockReviews);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReviewStatus | '전체'>('전체');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Review | null>(null);
   const [memo, setMemo] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchReviews()
+      .then(rows => { if (!cancelled) setReviews(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 선택 리뷰 변경 시 메모 입력값을 해당 리뷰의 저장된 메모로 리셋
+  const selectReview = (r: Review) => {
+    setSelected(r);
+    setMemo(r.memo ?? '');
+  };
 
   const filtered = reviews.filter(r => {
     const matchSearch = r.productName.includes(search) || r.storeName.includes(search) || r.buyerName.includes(search);
@@ -85,9 +96,26 @@ export default function ReviewManagement() {
     });
   };
 
-  const updateStatus = (id: string, status: ReviewStatus) => {
-    setReviews(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+  const updateStatus = async (id: string, status: ReviewStatus) => {
+    try {
+      await moderateReview(id, status);
+      setReviews(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
+  };
+
+  const saveMemo = async () => {
+    if (!selected) return;
+    try {
+      await moderateReview(selected.id, selected.status, memo);
+      setReviews(prev => prev.map(r => r.id === selected.id ? { ...r, memo } : r));
+      setSelected(prev => prev ? { ...prev, memo } : null);
+      alert('메모가 저장되었습니다.');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -120,6 +148,12 @@ export default function ReviewManagement() {
 
       <div className="flex gap-4">
         <div className={`card flex-1 overflow-hidden ${selected ? 'hidden xl:block' : ''}`}>
+          {loading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : loadError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+          ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -136,7 +170,7 @@ export default function ReviewManagement() {
                   <tr
                     key={r.id}
                     className={`border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors ${selected?.id === r.id ? 'bg-primary-light' : ''}`}
-                    onClick={() => setSelected(r)}
+                    onClick={() => selectReview(r)}
                   >
                     <td className="px-4 py-3 font-medium max-w-32 truncate">{r.productName}</td>
                     <td className="px-4 py-3 text-gray-600">{r.storeName}</td>
@@ -156,7 +190,7 @@ export default function ReviewManagement() {
                     <td className="px-4 py-3"><Badge type="review">{r.status}</Badge></td>
                     <td className="px-4 py-3 text-gray-400">{r.ownerReply ? '있음' : '-'}</td>
                     <td className="px-4 py-3">
-                      <button className="text-xs text-primary hover:underline" onClick={e => { e.stopPropagation(); setSelected(r); }}>상세</button>
+                      <button className="text-xs text-primary hover:underline" onClick={e => { e.stopPropagation(); selectReview(r); }}>상세</button>
                     </td>
                   </tr>
                 ))}
@@ -166,6 +200,8 @@ export default function ReviewManagement() {
           <div className="px-4">
             <Pagination page={page} totalPages={Math.ceil(filtered.length / PAGE_SIZE)} onPageChange={setPage} totalItems={filtered.length} pageSize={PAGE_SIZE} />
           </div>
+          </>
+          )}
         </div>
 
         {selected && (
@@ -218,6 +254,7 @@ export default function ReviewManagement() {
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">관리자 메모</p>
                 <textarea className="input h-20 resize-none text-sm" placeholder="관리자 메모 입력..." value={memo} onChange={e => setMemo(e.target.value)} />
+                <button onClick={saveMemo} className="btn-secondary w-full text-xs mt-2">메모 저장</button>
               </section>
 
               {isPendingReview(selected.status) ? (

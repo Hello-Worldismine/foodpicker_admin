@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Eye } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
@@ -7,23 +7,26 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { mockOrders } from '../data/mockData';
+import { fetchOrders, setOrderStatus, refundOrder } from '../lib/api';
 import type { Order, OrderStatus } from '../types';
 
 // 실제 DB order_seller_status enum('new'|'confirmed'|'completed'|'cancelled')과 동일한 4개 상태.
 // '노쇼', '분쟁중' 등은 별도 상태로 존재하지 않으며 memo로 기록한다.
 /**
- * [백엔드 연동 안내] 현재 mockOrders(목데이터)로 동작 중. 실 서비스는 Supabase `orders` 테이블(판매자 앱과 공유)에 대응됨.
- * - 목록/검색: GET /api/admin/orders?search=&status=&page=
- * - 주문상태 변경: PATCH /api/admin/orders/:id/seller-status  { sellerStatus: 'new'|'confirmed'|'completed'|'cancelled' }
- * - 환불 처리: POST /api/admin/orders/:id/refund  → paymentStatus='refunded', sellerStatus='cancelled'로 갱신 (PG 연동 포함, 별도 트랜잭션 필요)
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
+ * - 목록: fetchOrders() — `orders` 테이블(판매자 앱과 공유), 최신 1000건.
+ * - 상태 변경: setOrderStatus() — RPC admin_set_order_status(사유 필수, 서버가 감사 로그 기록).
+ * - 환불: refundOrder() — RPC admin_refund_order → paymentStatus='환불완료', status='취소'.
  * - safeNumber(050 안심번호)는 통신사 연동 결과이므로 관리자는 조회만 하고 발급/해제는 판매자 앱/PG 쪽 로직을 따른다.
+ * - 관리자 메모는 표시 전용(저장 액션 없음).
  */
 const ORDER_STATUSES: OrderStatus[] = ['신규접수', '픽업대기', '픽업완료', '취소'];
 const PAGE_SIZE = 7;
 
 export default function OrderManagement() {
-  const [orders, setOrders] = useState<Order[]>(mockOrders);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | '전체'>('전체');
   const [page, setPage] = useState(1);
@@ -33,6 +36,15 @@ export default function OrderManagement() {
   const [changeReason, setChangeReason] = useState('');
   const [refundModal, setRefundModal] = useState(false);
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOrders()
+      .then(rows => { if (!cancelled) setOrders(rows); })
+      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = orders.filter(o => {
     const matchSearch = o.orderNumber.includes(search) || o.buyerName.includes(search) || o.sellerName.includes(search) || o.productName.includes(search);
@@ -73,21 +85,31 @@ export default function OrderManagement() {
     });
   };
 
-  const handleStatusChange = () => {
+  const handleStatusChange = async () => {
     if (!selected || !changeReason.trim()) return alert('변경 사유를 입력해주세요.');
-    setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: newStatus } : o));
-    setSelected(prev => prev ? { ...prev, status: newStatus } : null);
-    setStatusChangeModal(false);
-    setChangeReason('');
-    alert(`주문 상태가 "${newStatus}"으로 변경되었습니다. (로그 기록됨)`);
+    try {
+      await setOrderStatus(selected.id, newStatus, changeReason.trim());
+      setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: newStatus } : o));
+      setSelected(prev => prev ? { ...prev, status: newStatus } : null);
+      setStatusChangeModal(false);
+      setChangeReason('');
+      alert(`주문 상태가 "${newStatus}"으로 변경되었습니다. (로그 기록됨)`);
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
-  const handleRefund = () => {
+  const handleRefund = async () => {
     if (!selected) return;
-    setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: '취소', paymentStatus: '환불완료' } : o));
-    setSelected(prev => prev ? { ...prev, status: '취소', paymentStatus: '환불완료' } : null);
-    setRefundModal(false);
-    alert('환불 처리가 완료되었습니다. (로그 기록됨)');
+    try {
+      await refundOrder(selected.id);
+      setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: '취소', paymentStatus: '환불완료' } : o));
+      setSelected(prev => prev ? { ...prev, status: '취소', paymentStatus: '환불완료' } : null);
+      setRefundModal(false);
+      alert('환불 처리가 완료되었습니다. (로그 기록됨)');
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+    }
   };
 
   return (
@@ -120,7 +142,11 @@ export default function OrderManagement() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.length === 0 ? (
+                {loading ? (
+                  <tr><td colSpan={10}><div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div></td></tr>
+                ) : loadError ? (
+                  <tr><td colSpan={10}><div className="py-16 text-center text-sm text-red-500">{loadError}</div></td></tr>
+                ) : paginated.length === 0 ? (
                   <tr><td colSpan={10}><EmptyState /></td></tr>
                 ) : paginated.map(order => (
                   <tr

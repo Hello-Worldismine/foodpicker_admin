@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -6,45 +7,59 @@ import { Leaf, Package, TrendingDown, DollarSign } from 'lucide-react';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
+import { fetchEnvStats } from '../lib/api';
 
 const COLORS = ['#22A06B', '#FF8A3D', '#3B82F6', '#8B5CF6', '#EF4444', '#F59E0B'];
 
 /**
- * [백엔드 연동 안내] 이 페이지의 모든 데이터(지역별/카테고리별 폐기 감소량, 월별 추이)가 하드코딩된 예시값이며,
- * 실 DB에 폐기량 관련 컬럼/테이블이 존재하지 않음(신규 집계 설계 필요).
- * 제안 방향: 완료된 주문(orders, seller_status='completed')의 상품 정가(original_price) 합계 등을 기준으로
- * "판매되지 않았다면 폐기됐을 양"을 추정하는 별도 배치 집계 파이프라인 + 결과 저장 테이블(env_stats_daily 등) 설계 필요.
- * API 예시: GET /api/admin/env-stats?period=monthly
+ * [백엔드 연동 안내] Supabase RPC `admin_env_stats`(api.fetchEnvStats) 실데이터 연동 완료.
+ * 반환 jsonb: totalSoldQty, totalDiscountAmount, monthly(최근 6개월 [{month,products}]),
+ * categoryStats([{name,value(수량)}]), regionStats([{region,qty}]).
+ * 폐기 감소량(kg)=판매 수량×0.25, 탄소 절감(톤)=kg×2/1000 은 클라이언트 추정 계산.
  */
-const regionData = [
-  { region: '서울 강남', kg: 124 },
-  { region: '서울 마포', kg: 87 },
-  { region: '서울 서초', kg: 65 },
-  { region: '경기 성남', kg: 43 },
-  { region: '서울 홍대', kg: 91 },
-  { region: '인천 연수', kg: 38 },
-];
+interface EnvStatsData {
+  totalSoldQty: number;
+  totalDiscountAmount: number;
+  monthly: { month: string; products: number }[];
+  categoryStats: { name: string; value: number }[];
+  regionStats: { region: string; qty: number }[];
+}
 
-const categoryWasteData = [
-  { name: '도시락', value: 35 },
-  { name: '빵', value: 28 },
-  { name: '디저트', value: 17 },
-  { name: '반찬', value: 12 },
-  { name: '음료', value: 5 },
-  { name: '샐러드', value: 3 },
-];
-
-const monthlyData = [
-  { month: '1월', products: 1240, kg: 310 },
-  { month: '2월', products: 1380, kg: 345 },
-  { month: '3월', products: 1560, kg: 390 },
-  { month: '4월', products: 1720, kg: 430 },
-  { month: '5월', products: 1890, kg: 472 },
-  { month: '6월', products: 2050, kg: 512 },
-];
+function formatWon(amount: number): string {
+  if (amount >= 100_000_000) {
+    const eok = amount / 100_000_000;
+    return `약 ${eok >= 10 ? Math.round(eok).toLocaleString() : eok.toFixed(1)}억 원`;
+  }
+  if (amount >= 10_000) return `약 ${Math.round(amount / 10_000).toLocaleString()}만 원`;
+  return `${amount.toLocaleString()}원`;
+}
 
 export default function EnvStats() {
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+  const [envStats, setEnvStats] = useState<EnvStatsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEnvStats()
+      .then((data) => { if (!cancelled) setEnvStats(data as EnvStatsData); })
+      .catch((e) => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const monthlyData = (envStats?.monthly ?? []).map((m) => ({ ...m, kg: m.products * 0.25 }));
+  const regionData = (envStats?.regionStats ?? []).map((r) => ({ region: r.region, kg: r.qty * 0.25 }));
+  const categoryTotal = (envStats?.categoryStats ?? []).reduce((sum, c) => sum + c.value, 0);
+  const categoryWasteData = (envStats?.categoryStats ?? []).map((c) => ({
+    name: c.name,
+    value: categoryTotal > 0 ? Math.round((c.value / categoryTotal) * 100) : 0,
+  }));
+
+  const totalSoldQty = envStats?.totalSoldQty ?? 0;
+  const wasteKg = totalSoldQty * 0.25;
+  const carbonTons = (wasteKg * 2) / 1000;
 
   const handleExcelDownload = () => {
     download({
@@ -79,10 +94,10 @@ export default function EnvStats() {
   };
 
   const stats = [
-    { label: '누적 판매 상품 수', value: '9,840개', icon: Package, color: 'text-primary', bg: 'bg-primary-light', note: '' },
-    { label: '예상 음식물 폐기 감소량', value: '2,460kg', icon: Leaf, color: 'text-primary', bg: 'bg-primary-light', note: '* 상품 평균 250g 기준 추정' },
-    { label: '예상 탄소 절감량', value: '4.9톤 CO₂', icon: TrendingDown, color: 'text-blue-600', bg: 'bg-blue-50', note: '* 1kg 음식물 = 2kgCO₂ 기준 추정' },
-    { label: '예상 절감 금액', value: '약 1억 2천만 원', icon: DollarSign, color: 'text-warm-orange', bg: 'bg-orange-50', note: '* 할인 금액 합계 기준 추정' },
+    { label: '누적 판매 상품 수', value: `${totalSoldQty.toLocaleString()}개`, icon: Package, color: 'text-primary', bg: 'bg-primary-light', note: '' },
+    { label: '예상 음식물 폐기 감소량', value: `${wasteKg.toLocaleString(undefined, { maximumFractionDigits: 1 })}kg`, icon: Leaf, color: 'text-primary', bg: 'bg-primary-light', note: '* 상품 평균 250g 기준 추정' },
+    { label: '예상 탄소 절감량', value: `${carbonTons.toLocaleString(undefined, { maximumFractionDigits: 2 })}톤 CO₂`, icon: TrendingDown, color: 'text-blue-600', bg: 'bg-blue-50', note: '* 1kg 음식물 = 2kgCO₂ 기준 추정' },
+    { label: '예상 절감 금액', value: formatWon(envStats?.totalDiscountAmount ?? 0), icon: DollarSign, color: 'text-warm-orange', bg: 'bg-orange-50', note: '* 할인 금액 합계 기준 추정' },
   ];
 
   return (
@@ -95,6 +110,12 @@ export default function EnvStats() {
         <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
       </div>
 
+      {loading ? (
+        <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+      ) : loadError ? (
+        <div className="py-16 text-center text-sm text-red-500">{loadError}</div>
+      ) : (
+      <>
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {stats.map(({ label, value, icon: Icon, color, bg, note }) => (
@@ -156,6 +177,8 @@ export default function EnvStats() {
           </BarChart>
         </ResponsiveContainer>
       </div>
+      </>
+      )}
 
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
