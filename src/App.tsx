@@ -11,6 +11,7 @@ import ReviewManagement from './pages/ReviewManagement';
 import BannerManagement from './pages/BannerManagement';
 import CategoryManagement from './pages/CategoryManagement';
 import CouponManagement from './pages/CouponManagement';
+import FaqManagement from './pages/FaqManagement';
 import EnvStats from './pages/EnvStats';
 import AdminAccounts from './pages/AdminAccounts';
 import Settings from './pages/Settings';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/banners" element={<BannerManagement />} />
           <Route path="/categories" element={<CategoryManagement />} />
           <Route path="/coupons" element={<CouponManagement />} />
+          <Route path="/faqs" element={<FaqManagement />} />
           <Route path="/env-stats" element={<EnvStats />} />
           <Route path="/admins" element={<AdminAccounts />} />
           <Route path="/settings" element={<Settings />} />

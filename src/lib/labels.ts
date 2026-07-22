@@ -3,7 +3,7 @@
 import type {
   ProductStatus, OrderStatus, PaymentStatus, SettlementStatus,
   ReportStatus, ReviewStatus, AdminRole, CouponCostBearer, CouponSource,
-  CouponRequestStatus, InquirerType, ProductPauseReason,
+  CouponRequestStatus, InquirerType, ProductPauseReason, FaqCategory,
 } from '../types';
 
 function invert<K extends string, V extends string>(map: Record<K, V>): Record<V, K> {
@@ -93,6 +93,13 @@ export const NOTICE_TARGET_KO: Record<string, '전체' | '사용자' | '판매�
   all: '전체', buyer: '사용자', seller: '판매자',
 };
 export const NOTICE_TARGET_EN = invert(NOTICE_TARGET_KO);
+
+// ── faq ───────────────────────────────────────────────────────────────────
+// 소비자 앱 FAQScreen.js 의 카테고리 구분과 동일(값 자체는 앱 화면에 노출되지 않고 그룹핑 용도).
+export const FAQ_CATEGORY_KO: Record<string, FaqCategory> = {
+  order_payment: '주문 · 결제', pickup: '픽업', product_store: '상품 · 가게', account: '계정',
+};
+export const FAQ_CATEGORY_EN = invert(FAQ_CATEGORY_KO);
 
 // ── 날짜/표시 헬퍼 ─────────────────────────────────────────────────────────
 const pad = (n: number) => String(n).padStart(2, '0');

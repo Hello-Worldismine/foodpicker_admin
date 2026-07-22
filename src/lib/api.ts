@@ -13,11 +13,12 @@ import {
   COST_BEARER_KO, COST_BEARER_EN, DISCOUNT_TYPE_KO, DISCOUNT_TYPE_EN,
   COUPON_SOURCE_KO, COUPON_REQUEST_KO,
   BANNER_POSITION_KO, BANNER_POSITION_EN, NOTICE_TARGET_KO, NOTICE_TARGET_EN,
+  FAQ_CATEGORY_KO, FAQ_CATEGORY_EN,
   fmtDate, fmtDateTime, fmtPickupWindow, regionFromAddress, maskResidentNumber,
 } from './labels';
 import type {
   Seller, SellerStatus, Product, Order, Settlement, Report, ReportStatus, Review, ReviewStatus,
-  Banner, Notice, Category, Coupon, AdminAccount, AdminRole,
+  Banner, Notice, Category, Coupon, AdminAccount, AdminRole, Faq, FaqCategory,
 } from '../types';
 
 function throwIf(error: { message: string } | null): void {
@@ -218,6 +219,18 @@ export function mapCategory(row: any, productCount = 0): Category {
     productCount,
     active: row.is_active ?? false,
     order: row.display_order ?? 0,
+  };
+}
+
+export function mapFaq(row: any): Faq {
+  return {
+    id: row.id,
+    category: FAQ_CATEGORY_KO[row.category] ?? '주문 · 결제',
+    question: row.question ?? '',
+    answer: row.answer ?? '',
+    order: row.display_order ?? 0,
+    active: row.is_active ?? false,
+    createdAt: fmtDate(row.created_at),
   };
 }
 
@@ -679,6 +692,59 @@ export async function updateCategory(categoryId: string, patch: { name?: string;
   if (patch.active !== undefined) dbPatch.is_active = patch.active;
   if (patch.order !== undefined) dbPatch.display_order = patch.order;
   const { error } = await supabase.from('categories').update(dbPatch).eq('id', categoryId);
+  throwIf(error);
+}
+
+// ============================================================================
+// FAQ (자주 묻는 질문) — 소비자 앱 FAQScreen.js 와 동일 콘텐츠를 관리자 웹에서 CRUD
+// ============================================================================
+
+export async function fetchFaqs(): Promise<Faq[]> {
+  const { data, error } = await supabase
+    .from('faqs').select('*').order('category', { ascending: true }).order('display_order', { ascending: true });
+  throwIf(error);
+  return (data ?? []).map(mapFaq);
+}
+
+export interface FaqForm {
+  category: FaqCategory; question: string; answer: string; active?: boolean;
+}
+
+function faqToDb(form: FaqForm): Record<string, unknown> {
+  return {
+    category: FAQ_CATEGORY_EN[form.category] ?? 'order_payment',
+    question: form.question,
+    answer: form.answer,
+    ...(form.active !== undefined ? { is_active: form.active } : {}),
+  };
+}
+
+export async function createFaq(form: FaqForm): Promise<Faq> {
+  const dbCategory = FAQ_CATEGORY_EN[form.category] ?? 'order_payment';
+  const { data: existing } = await supabase.from('faqs').select('display_order')
+    .eq('category', dbCategory).order('display_order', { ascending: false }).limit(1);
+  const nextOrder = ((existing?.[0]?.display_order as number | undefined) ?? 0) + 1;
+  const { data, error } = await supabase.from('faqs')
+    .insert({ ...faqToDb(form), display_order: nextOrder, is_active: form.active ?? true })
+    .select().single();
+  throwIf(error);
+  return mapFaq(data);
+}
+
+export async function updateFaq(faqId: string, form: FaqForm): Promise<Faq> {
+  const { data, error } = await supabase.from('faqs')
+    .update(faqToDb(form)).eq('id', faqId).select().single();
+  throwIf(error);
+  return mapFaq(data);
+}
+
+export async function toggleFaqActive(faqId: string, isActive: boolean): Promise<void> {
+  const { error } = await supabase.from('faqs').update({ is_active: isActive }).eq('id', faqId);
+  throwIf(error);
+}
+
+export async function deleteFaq(faqId: string): Promise<void> {
+  const { error } = await supabase.from('faqs').delete().eq('id', faqId);
   throwIf(error);
 }
 

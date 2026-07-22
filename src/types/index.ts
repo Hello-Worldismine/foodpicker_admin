@@ -199,6 +199,19 @@ export interface Category {
   order: number;
 }
 
+// 소비자 앱(foodpicker_app) FAQScreen.js 의 고정 4개 카테고리와 동일한 값을 쓴다.
+export type FaqCategory = '주문 · 결제' | '픽업' | '상품 · 가게' | '계정';
+
+export interface Faq {
+  id: string;
+  category: FaqCategory;
+  question: string;
+  answer: string;
+  order: number;
+  active: boolean;
+  createdAt: string;
+}
+
 // 쿠폰 예산 부담 주체 — 정산 배치가 이 값을 보고 할인액을 본사/점주 중 누구 정산에서 차감할지 결정한다.
 export type CouponCostBearer = '본사' | '점주' | '분담';
 // 쿠폰을 누가 만들었는지: 관리자가 직접 발행했는지, 점주가 신청해서 관리자 승인을 거쳤는지.

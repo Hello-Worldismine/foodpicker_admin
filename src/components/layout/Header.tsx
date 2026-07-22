@@ -15,6 +15,7 @@ const pageTitles: Record<string, string> = {
   '/banners': '배너/공지 관리',
   '/categories': '카테고리 관리',
   '/coupons': '쿠폰/프로모션',
+  '/faqs': 'FAQ 관리',
   '/env-stats': '환경 통계',
   '/admins': '관리자 계정',
   '/settings': '설정',

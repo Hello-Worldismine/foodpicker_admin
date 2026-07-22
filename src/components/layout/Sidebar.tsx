@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Store, Package, ShoppingCart, CreditCard,
-  Flag, Star, Megaphone, Tag, Ticket, Leaf, Users, Settings,
+  Flag, Star, Megaphone, Tag, Ticket, HelpCircle, Leaf, Users, Settings,
   ChevronLeft, ChevronRight, X
 } from 'lucide-react';
 
@@ -16,6 +16,7 @@ const navItems = [
   { path: '/banners', label: '배너/공지 관리', icon: Megaphone },
   { path: '/categories', label: '카테고리 관리', icon: Tag },
   { path: '/coupons', label: '쿠폰/프로모션', icon: Ticket },
+  { path: '/faqs', label: 'FAQ 관리', icon: HelpCircle },
   { path: '/env-stats', label: '환경 통계', icon: Leaf },
   { path: '/admins', label: '관리자 계정', icon: Users },
   { path: '/settings', label: '설정', icon: Settings },
