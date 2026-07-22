@@ -194,9 +194,22 @@ export interface Category {
   id: string;
   name: string;
   icon: string;
+  imageUrl?: string; // 아이콘 이미지 URL(category-icons 버킷) — 있으면 이모지 대신 표시
   productCount: number;
   active: boolean;
   order: number;
+}
+
+// 매장 피커용 경량 타입 — 리뷰 매장별 보기·쿠폰 매장 지정 발급 공용(민감정보 제외)
+export interface StoreOption {
+  id: string; // stores.id
+  sellerId: string; // auth.users id — 쿠폰 seller_id 지정에 사용
+  name: string;
+  category: string;
+  address: string;
+  rating: number;
+  reviewCount: number; // 관리자 화면용 전체 리뷰 수(숨김/삭제 포함, admin_stores.total_review_count)
+  approved: boolean; // 승인완료 && 이용정지 아님 — 쿠폰 발급 대상 필터에 사용
 }
 
 // 소비자 앱(foodpicker_app) FAQScreen.js 의 고정 4개 카테고리와 동일한 값을 쓴다.
@@ -236,9 +249,9 @@ export interface Coupon {
   platformShare?: number; // costBearer가 '분담'일 때 본사 부담 비율(%). 나머지는 점주 부담.
   allowStacking: boolean; // 다른 쿠폰과 중복 사용 허용 여부
   source: CouponSource;
-  sellerId?: string; // 점주 신청 쿠폰인 경우 신청한 매장
+  sellerId?: string; // 매장 전용 쿠폰의 대상 매장(점주 신청 또는 관리자 매장 지정 발급)
   sellerName?: string;
-  requestStatus?: CouponRequestStatus; // source가 '점주 신청'일 때만 사용, 관리자 발행은 항상 승인된 것으로 간주
+  requestStatus?: CouponRequestStatus; // 점주 신청 승인 흐름 + 관리자 매장 지정 발급의 판매자 수락 대기('대기')에 사용
   rejectReason?: string;
 }
 

@@ -18,7 +18,7 @@ import {
 } from './labels';
 import type {
   Seller, SellerStatus, Product, Order, Settlement, Report, ReportStatus, Review, ReviewStatus,
-  Banner, Notice, Category, Coupon, AdminAccount, AdminRole, Faq, FaqCategory,
+  Banner, Notice, Category, Coupon, AdminAccount, AdminRole, Faq, FaqCategory, StoreOption,
 } from '../types';
 
 function throwIf(error: { message: string } | null): void {
@@ -216,6 +216,7 @@ export function mapCategory(row: any, productCount = 0): Category {
     id: row.id,
     name: row.name ?? '',
     icon: row.icon ?? '📦',
+    imageUrl: row.image_url ?? undefined,
     productCount,
     active: row.is_active ?? false,
     order: row.display_order ?? 0,
@@ -472,11 +473,46 @@ export async function reportRefund(reportId: string, reason?: string): Promise<R
 // 리뷰
 // ============================================================================
 
-export async function fetchReviews(): Promise<Review[]> {
-  const { data, error } = await supabase
+/** 리뷰 목록 — storeId 지정 시 해당 매장 리뷰만(매장별 보기), 항상 최신순 */
+export async function fetchReviews(storeId?: string): Promise<Review[]> {
+  let query = supabase
     .from('admin_reviews').select('*').order('created_at', { ascending: false }).limit(1000);
+  if (storeId) query = query.eq('store_id', storeId);
+  const { data, error } = await query;
   throwIf(error);
   return (data ?? []).map(mapReview);
+}
+
+/** 매장 피커용 경량 목록(리뷰 매장별 보기·쿠폰 매장 지정 발급 공용) — 민감정보 컬럼 미조회.
+ *  total_review_count 는 20260722010000 마이그레이션의 admin_stores 재정의가 선행돼야 한다. */
+export async function fetchStoreOptions(): Promise<StoreOption[]> {
+  const { data, error } = await supabase
+    .from('admin_stores')
+    .select('id, seller_id, name, category, address, rating, review_count, total_review_count, approval_status, suspended_by_admin')
+    .order('name', { ascending: true });
+  throwIf(error);
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    sellerId: row.seller_id,
+    name: row.name ?? '',
+    category: row.category ?? '',
+    address: row.address ?? '',
+    rating: Number(row.rating ?? 0),
+    reviewCount: row.total_review_count ?? row.review_count ?? 0,
+    approved: row.approval_status === 'approved' && !row.suspended_by_admin,
+  }));
+}
+
+/** 매장별 '신고검토(flagged)' 대기 리뷰 수 — 리뷰 관리 매장 목록의 검토 대기 배지용 */
+export async function fetchFlaggedReviewCounts(): Promise<Map<string, number>> {
+  const { data, error } = await supabase
+    .from('admin_reviews').select('store_id').eq('moderation_status', 'flagged');
+  throwIf(error);
+  const counts = new Map<string, number>();
+  for (const row of (data ?? []) as { store_id: string }[]) {
+    if (row.store_id) counts.set(row.store_id, (counts.get(row.store_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export async function moderateReview(reviewId: string, statusKo: ReviewStatus, memo?: string): Promise<Review> {
@@ -512,6 +548,10 @@ export interface CouponForm {
   costBearer: '본사' | '점주' | '분담';
   platformShare?: number;
   allowStacking: boolean;
+  /** 매장 지정 발급 — 지정 시 판매자 수락 대기(pending·비활성) 상태로 생성된다. auth.users id. */
+  sellerId?: string;
+  /** UI 표시용 매장명(DB 미저장) */
+  sellerName?: string;
 }
 
 export async function createCoupon(form: CouponForm): Promise<Coupon> {
@@ -530,10 +570,27 @@ export async function createCoupon(form: CouponForm): Promise<Coupon> {
     platform_share: form.costBearer === '분담' ? form.platformShare ?? 50 : null,
     allow_stacking: form.allowStacking,
     source: 'admin',
-    is_active: true,
+    // 매장 지정 발급: 판매자 수락 대기(pending·비활성)로 생성 → 판매자가 respond_coupon_offer RPC로
+    // 수락하면 활성화(approved)되고, store_coupons 게이트를 통과해 사용자 앱 상점 상세에 노출된다.
+    // DB 트리거(notify_coupon_offer)가 지정 시점에 판매자 알림을 자동 발송한다.
+    seller_id: form.sellerId ?? null,
+    request_status: form.sellerId ? 'pending' : null,
+    is_active: form.sellerId ? false : true,
   }).select().single();
   throwIf(error);
-  return mapCoupon(data);
+  const coupon = mapCoupon(data);
+  // insert 반환 행에는 admin_coupons 뷰 전용 store_name 이 없어 매장명이 비므로 폼 값으로 보충
+  if (form.sellerId && !coupon.sellerName) coupon.sellerName = form.sellerName;
+  return coupon;
+}
+
+/** 매장 지정 발급 회수 — 판매자 수락 대기(pending) 상태의 관리자 발행 쿠폰을 철회한다.
+ *  DELETE RLS 정책이 없으므로 rejected + 비활성 UPDATE 방식(coupons_admin_update 통과). */
+export async function withdrawCouponOffer(couponId: string): Promise<void> {
+  const { error } = await supabase.from('coupons')
+    .update({ request_status: 'rejected', is_active: false, reject_reason: '관리자 회수' })
+    .eq('id', couponId).eq('source', 'admin').eq('request_status', 'pending');
+  throwIf(error);
 }
 
 export async function toggleCouponActive(couponId: string, isActive: boolean): Promise<void> {
@@ -674,25 +731,38 @@ export async function fetchCategories(): Promise<Category[]> {
   return (cats ?? []).map(row => mapCategory(row, counts.get(row.name) ?? 0));
 }
 
-export async function createCategory(name: string, icon: string): Promise<Category> {
+export async function createCategory(name: string, icon: string, imageUrl?: string): Promise<Category> {
   const { data: existing } = await supabase.from('categories').select('display_order')
     .order('display_order', { ascending: false }).limit(1);
   const nextOrder = ((existing?.[0]?.display_order as number | undefined) ?? 0) + 1;
   const { data, error } = await supabase.from('categories')
-    .insert({ name, icon: icon || '📦', display_order: nextOrder, is_active: true })
+    .insert({ name, icon: icon || '📦', image_url: imageUrl || null, display_order: nextOrder, is_active: true })
     .select().single();
   throwIf(error);
   return mapCategory(data, 0);
 }
 
-export async function updateCategory(categoryId: string, patch: { name?: string; icon?: string; active?: boolean; order?: number }): Promise<void> {
+export async function updateCategory(categoryId: string, patch: { name?: string; icon?: string; imageUrl?: string | null; active?: boolean; order?: number }): Promise<void> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.name !== undefined) dbPatch.name = patch.name;
   if (patch.icon !== undefined) dbPatch.icon = patch.icon;
+  if (patch.imageUrl !== undefined) dbPatch.image_url = patch.imageUrl; // null → 이미지 제거(이모지 폴백)
   if (patch.active !== undefined) dbPatch.is_active = patch.active;
   if (patch.order !== undefined) dbPatch.display_order = patch.order;
   const { error } = await supabase.from('categories').update(dbPatch).eq('id', categoryId);
   throwIf(error);
+}
+
+/** 카테고리 아이콘 이미지 업로드(category-icons 버킷) → public URL */
+export async function uploadCategoryIcon(file: File): Promise<string> {
+  const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+  const path = `icons/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage.from('category-icons').upload(path, file, {
+    contentType: file.type || 'image/png',
+  });
+  throwIf(error);
+  const { data } = supabase.storage.from('category-icons').getPublicUrl(path);
+  return data.publicUrl;
 }
 
 // ============================================================================

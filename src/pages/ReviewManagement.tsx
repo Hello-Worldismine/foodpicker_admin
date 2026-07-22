@@ -1,23 +1,27 @@
 import { useEffect, useState } from 'react';
-import { Search, Star, ImageIcon } from 'lucide-react';
+import { Search, Star, ImageIcon, ArrowLeft } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { fetchReviews, moderateReview } from '../lib/api';
-import type { Review, ReviewStatus } from '../types';
+import { fetchReviews, fetchStoreOptions, fetchFlaggedReviewCounts, moderateReview } from '../lib/api';
+import type { Review, ReviewStatus, StoreOption } from '../types';
 
-const PAGE_SIZE = 7;
+const STORE_PAGE_SIZE = 10;
+const REVIEW_PAGE_SIZE = 7;
 
 const isHidden = (s: ReviewStatus) => s === '숨김' || s === '신고검토-숨김';
 const isDeleted = (s: ReviewStatus) => s === '삭제' || s === '신고검토-삭제';
 const isPendingReview = (s: ReviewStatus) => s === '신고검토';
 
 /**
- * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
- * - 목록: `admin_reviews` 뷰 조회(fetchReviews) — product_name/store_name/reviewer_name/report_count 등 뷰 전용 필드 포함.
+ * [백엔드 연동 안내] Supabase 실데이터 연동 완료. 매장별 리뷰 보기(2단계 드릴다운) 구조.
+ * - 1단계(매장 선택): `admin_stores` 경량 조회(fetchStoreOptions) — 매장명/카테고리/주소 부분일치 검색(클라이언트 필터),
+ *   리뷰수 내림차순 정렬. 매장 행 클릭 시 해당 매장 리뷰 목록으로 진입.
+ * - 2단계(리뷰 목록): `admin_reviews` 뷰 조회(fetchReviews(storeId)) — store_id 필터 + 최신순(created_at desc).
+ *   product_name/reviewer_name/report_count 등 뷰 전용 필드 포함. 매장 전환 시 검색/필터/선택/페이지 상태 전체 리셋.
  * - 모더레이션/메모: `admin_moderate_review` RPC(moderateReview) — 상태 7종(정상/숨김/삭제/신고검토/신고검토-*)과
  *   관리자 메모를 서버에 기록하며 감사 로그도 서버에서 자동 남김. RPC 반환 행에는 뷰 전용 필드가 없을 수 있으므로
  *   로컬 상태에는 변경 필드(status/memo)만 스프레드 병합한다.
@@ -35,9 +39,20 @@ function Stars({ rating }: { rating: number }) {
 }
 
 export default function ReviewManagement() {
+  // ── 1단계: 매장 선택 상태
+  const [stores, setStores] = useState<StoreOption[]>([]);
+  const [storesLoading, setStoresLoading] = useState(true);
+  const [storesError, setStoresError] = useState('');
+  const [storeSearch, setStoreSearch] = useState('');
+  const [storePage, setStorePage] = useState(1);
+  const [selectedStore, setSelectedStore] = useState<StoreOption | null>(null);
+  // 매장별 '신고검토(대기)' 리뷰 수 — 어느 매장에 검토 대기 건이 있는지 목록에서 바로 보이게
+  const [flaggedCounts, setFlaggedCounts] = useState<Map<string, number>>(new Map());
+
+  // ── 2단계: 선택 매장의 리뷰 목록 상태
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReviewStatus | '전체'>('전체');
   const [page, setPage] = useState(1);
@@ -47,12 +62,47 @@ export default function ReviewManagement() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchReviews()
-      .then(rows => { if (!cancelled) setReviews(rows); })
-      .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    Promise.all([fetchStoreOptions(), fetchFlaggedReviewCounts()])
+      .then(([rows, counts]) => { if (!cancelled) { setStores(rows); setFlaggedCounts(counts); } })
+      .catch(e => { if (!cancelled) setStoresError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setStoresLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // 매장 선택 시 해당 매장 리뷰 로드(최신순은 서버 쿼리에서 보장)
+  useEffect(() => {
+    if (!selectedStore) return;
+    let cancelled = false;
+    setReviewsLoading(true);
+    setReviewsError('');
+    fetchReviews(selectedStore.id)
+      .then(rows => { if (!cancelled) setReviews(rows); })
+      .catch(e => { if (!cancelled) setReviewsError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setReviewsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedStore]);
+
+  // 매장 전환/이탈 시 리뷰 화면 상태 전체 리셋
+  const resetReviewState = () => {
+    setReviews([]);
+    setSelected(null);
+    setMemo('');
+    setSearch('');
+    setStatusFilter('전체');
+    setPage(1);
+    setReviewsError('');
+  };
+
+  const selectStore = (store: StoreOption) => {
+    resetReviewState();
+    setReviewsLoading(true); // 이펙트 실행 전 1프레임 동안 이전 매장의 빈/에러 상태가 비치지 않게 동기 세팅
+    setSelectedStore(store);
+  };
+
+  const backToStores = () => {
+    resetReviewState();
+    setSelectedStore(null);
+  };
 
   // 선택 리뷰 변경 시 메모 입력값을 해당 리뷰의 저장된 메모로 리셋
   const selectReview = (r: Review) => {
@@ -60,22 +110,31 @@ export default function ReviewManagement() {
     setMemo(r.memo ?? '');
   };
 
+  // 매장 검색: 매장명/카테고리/주소 부분일치. 신고검토 대기 매장 우선, 그다음 리뷰수 내림차순
+  const filteredStores = stores
+    .filter(s => s.name.includes(storeSearch) || s.category.includes(storeSearch) || s.address.includes(storeSearch))
+    .sort((a, b) =>
+      (flaggedCounts.get(b.id) ?? 0) - (flaggedCounts.get(a.id) ?? 0) || b.reviewCount - a.reviewCount);
+  const paginatedStores = filteredStores.slice((storePage - 1) * STORE_PAGE_SIZE, storePage * STORE_PAGE_SIZE);
+
   const filtered = reviews.filter(r => {
-    const matchSearch = r.productName.includes(search) || r.storeName.includes(search) || r.buyerName.includes(search);
+    const matchSearch = r.productName.includes(search) || r.buyerName.includes(search);
     const matchStatus = statusFilter === '전체' || r.status === statusFilter;
     return matchSearch && matchStatus;
   });
 
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paginated = filtered.slice((page - 1) * REVIEW_PAGE_SIZE, page * REVIEW_PAGE_SIZE);
 
   const handleExcelDownload = () => {
+    if (!selectedStore) return;
     const filters = [
+      `매장: ${selectedStore.name}`,
       search && `검색: ${search}`,
       statusFilter !== '전체' && `상태: ${statusFilter}`,
     ].filter(Boolean).join(', ');
 
     download({
-      filename: 'reviews',
+      filename: `reviews_${selectedStore.name}`,
       menu: '리뷰 관리',
       filters,
       sheets: [{
@@ -118,13 +177,97 @@ export default function ReviewManagement() {
     }
   };
 
+  // ── 1단계: 매장 선택 화면
+  if (!selectedStore) {
+    return (
+      <div className="space-y-4">
+        <div className="card p-4">
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input className="input pl-9" placeholder="매장명, 카테고리, 주소 검색" value={storeSearch} onChange={e => { setStoreSearch(e.target.value); setStorePage(1); }} />
+          </div>
+        </div>
+
+        <div className="card overflow-hidden">
+          {storesLoading ? (
+            <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+          ) : storesError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{storesError}</div>
+          ) : (
+          <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-soft-gray/50">
+                  {['매장명', '카테고리', '주소', '평점', '리뷰수', '신고검토'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedStores.length === 0 ? (
+                  <tr><td colSpan={6}><EmptyState message="검색된 매장이 없습니다." /></td></tr>
+                ) : paginatedStores.map(s => (
+                  <tr
+                    key={s.id}
+                    className="border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors"
+                    onClick={() => selectStore(s)}
+                  >
+                    <td className="px-4 py-3 font-medium">{s.name}</td>
+                    <td className="px-4 py-3 text-gray-600">{s.category || '-'}</td>
+                    <td className="px-4 py-3 text-gray-500 max-w-72 truncate">{s.address || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1">
+                        <Star size={12} className="text-yellow-400 fill-yellow-400" /> {s.rating.toFixed(1)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3"><span className={s.reviewCount > 0 ? 'font-semibold text-charcoal' : 'text-gray-400'}>{s.reviewCount}</span></td>
+                    <td className="px-4 py-3">
+                      {(flaggedCounts.get(s.id) ?? 0) > 0 ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-alert-red">
+                          {flaggedCounts.get(s.id)}건 대기
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4">
+            <Pagination page={storePage} totalPages={Math.max(1, Math.ceil(filteredStores.length / STORE_PAGE_SIZE))} onPageChange={setStorePage} totalItems={filteredStores.length} pageSize={STORE_PAGE_SIZE} />
+          </div>
+          </>
+          )}
+        </div>
+
+        {toast && <Toast message={toast.message} type={toast.type} />}
+      </div>
+    );
+  }
+
+  // ── 2단계: 선택 매장 리뷰 목록 화면
   return (
     <div className="space-y-4">
+      <div className="card p-4 flex flex-wrap items-center gap-3">
+        <button onClick={backToStores} className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-primary transition-colors">
+          <ArrowLeft size={16} /> 매장 목록
+        </button>
+        <div className="w-px h-5 bg-gray-200" />
+        <h2 className="font-semibold text-charcoal">{selectedStore.name}</h2>
+        <span className="inline-flex items-center gap-1 text-sm text-gray-500">
+          <Star size={13} className="text-yellow-400 fill-yellow-400" /> {selectedStore.rating.toFixed(1)}
+        </span>
+        <span className="text-sm text-gray-400">리뷰 {selectedStore.reviewCount}건</span>
+      </div>
+
       <div className="card p-4">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-48">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input className="input pl-9" placeholder="상품명, 매장명, 구매자 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+            <input className="input pl-9" placeholder="상품명, 구매자 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
           </div>
           <select className="input w-40" value={statusFilter} onChange={e => { setStatusFilter(e.target.value as ReviewStatus | '전체'); setPage(1); }}>
             <option value="전체">전체 상태</option>
@@ -148,24 +291,24 @@ export default function ReviewManagement() {
 
       <div className="flex gap-4">
         <div className={`card flex-1 overflow-hidden ${selected ? 'hidden xl:block' : ''}`}>
-          {loading ? (
+          {reviewsLoading ? (
             <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
-          ) : loadError ? (
-            <div className="py-16 text-center text-sm text-alert-red">{loadError}</div>
+          ) : reviewsError ? (
+            <div className="py-16 text-center text-sm text-alert-red">{reviewsError}</div>
           ) : (
           <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['상품명', '매장명', '구매자', '별점', '사진', '작성일', '신고수', '상태', '답글', '관리'].map(h => (
+                  {['상품명', '구매자', '별점', '사진', '작성일', '신고수', '상태', '답글', '관리'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
-                  <tr><td colSpan={10}><EmptyState /></td></tr>
+                  <tr><td colSpan={9}><EmptyState message="등록된 리뷰가 없습니다." /></td></tr>
                 ) : paginated.map(r => (
                   <tr
                     key={r.id}
@@ -173,7 +316,6 @@ export default function ReviewManagement() {
                     onClick={() => selectReview(r)}
                   >
                     <td className="px-4 py-3 font-medium max-w-32 truncate">{r.productName}</td>
-                    <td className="px-4 py-3 text-gray-600">{r.storeName}</td>
                     <td className="px-4 py-3">{r.buyerName}</td>
                     <td className="px-4 py-3"><Stars rating={r.rating} /></td>
                     <td className="px-4 py-3">
@@ -198,7 +340,7 @@ export default function ReviewManagement() {
             </table>
           </div>
           <div className="px-4">
-            <Pagination page={page} totalPages={Math.ceil(filtered.length / PAGE_SIZE)} onPageChange={setPage} totalItems={filtered.length} pageSize={PAGE_SIZE} />
+            <Pagination page={page} totalPages={Math.max(1, Math.ceil(filtered.length / REVIEW_PAGE_SIZE))} onPageChange={setPage} totalItems={filtered.length} pageSize={REVIEW_PAGE_SIZE} />
           </div>
           </>
           )}

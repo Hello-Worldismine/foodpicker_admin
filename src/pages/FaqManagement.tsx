@@ -15,9 +15,9 @@ import type { Faq, FaqCategory } from '../types';
  *   src/lib/labels.ts의 FAQ_CATEGORY_KO/EN 이 화면 라벨과 매핑한다.
  * ⚠️ 소비자 앱은 아직 이 FAQ 내용을 화면에 하드코딩(FAQScreen.js의 FAQS 상수)해서 보여주고 있어,
  *   여기서 등록/수정해도 앱에는 반영되지 않는다. 실제로 연동하려면 소비자 앱도 faqs 테이블(공개 조회,
- *   is_active=true 행만)을 fetch하도록 수정해야 한다 — 이번 작업 범위는 관리자 웹까지다.
- * ⚠️ DB 마이그레이션: FoodPicker_seller_app/supabase/migrations/에 faqs 테이블 생성 SQL을 추가해뒀다
- *   (관리자만 쓰기, 활성 행은 공개 읽기 가능하도록 RLS 설계). Supabase SQL Editor에서 직접 실행해야
+ *   is_active=true 행만)을 fetch하도록 수정해야 한다 — 공개 읽기 RLS는 마이그레이션에 준비돼 있다.
+ * ⚠️ DB 마이그레이션: FoodPicker_seller_app/supabase/migrations/20260722000000_faqs.sql
+ *   (관리자만 쓰기, 활성 행은 공개 읽기 RLS + 기존 10건 시드). Supabase SQL Editor에서 직접 실행해야
  *   실제로 테이블이 생기며, 이 화면은 그 전까지 "데이터를 불러오지 못했습니다" 오류를 표시한다.
  */
 const FAQ_CATEGORIES: FaqCategory[] = ['주문 · 결제', '픽업', '상품 · 가게', '계정'];

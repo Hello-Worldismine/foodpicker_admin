@@ -8,8 +8,8 @@ import Toast from '../components/ui/Toast';
 import Lightbox from '../components/ui/Lightbox';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { useAdmin } from '../context/AdminContext';
-import { fetchReports, fetchReportLogs, updateReport, addReportLog, reportRefund } from '../lib/api';
-import type { Report, ReportStatus, InquirerType } from '../types';
+import { fetchReports, fetchReportLogs, fetchAdmins, updateReport, addReportLog, reportRefund } from '../lib/api';
+import type { Report, ReportStatus, InquirerType, AdminAccount } from '../types';
 
 const USER_REPORT_TYPES = [
   '전체',
@@ -84,16 +84,19 @@ export default function ReportManagement() {
   const [internalMemo, setInternalMemo] = useState('');
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [logs, setLogs] = useState<Record<string, string[]>>({});
+  // 담당자 배정 드롭다운용 — 권한이 부여된(활성) 관리자만 노출한다.
+  const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const { download, isLoading, toast: xlsxToast, canDownload } = useExcelDownload();
   const { currentAdmin } = useAdmin();
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchReports(), fetchReportLogs()])
-      .then(([rows, logMap]) => {
+    Promise.all([fetchReports(), fetchReportLogs(), fetchAdmins()])
+      .then(([rows, logMap, adminRows]) => {
         if (cancelled) return;
         setReports(rows);
         setLogs(logMap);
+        setAdmins(adminRows.filter(a => a.status === '활성'));
       })
       .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -213,6 +216,24 @@ export default function ReportManagement() {
     setSelected(prev => prev && prev.id === id ? { ...prev, status, manager } : prev);
     if (logMsg) appendLocalLog(id, logMsg);
     return true;
+  };
+
+  // 담당자 수동 배정/변경 — 상세 패널 드롭다운에서 호출되며 처리 이력에 system 로그로 남긴다.
+  const changeManager = async (manager: string) => {
+    if (!selected || manager === selected.manager) return;
+    const id = selected.id;
+    const msg = `담당자 변경: ${selected.manager} → ${manager}`;
+    try {
+      await updateReport(id, { manager });
+    } catch (e) {
+      alert('처리 실패: ' + (e as Error).message);
+      return;
+    }
+    // 배정 자체는 성공 — 이력 기록 실패가 서버-로컬 담당자 불일치를 만들지 않도록 분리
+    try { await addReportLog(id, currentAdmin.name, 'system', msg); } catch { /* 이력은 부가 기록 */ }
+    setReports(prev => prev.map(r => r.id === id ? { ...r, manager } : r));
+    setSelected(prev => prev && prev.id === id ? { ...prev, manager } : prev);
+    appendLocalLog(id, msg);
   };
 
   const handleReply = async () => {
@@ -401,15 +422,26 @@ export default function ReportManagement() {
                       <span className="text-charcoal text-right text-xs">{selected.buyerName}</span>
                     </div>
                   )}
-                  {[
-                    [selected.inquirerType === '판매자' ? '문의 매장' : '판매자', selected.sellerName],
-                    ['담당자', selected.manager],
-                  ].map(([l, v]) => (
-                    <div key={l} className="flex justify-between">
-                      <span className="text-gray-500">{l}</span>
-                      <span className="text-charcoal text-right text-xs">{v}</span>
-                    </div>
-                  ))}
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">{selected.inquirerType === '판매자' ? '문의 매장' : '판매자'}</span>
+                    <span className="text-charcoal text-right text-xs">{selected.sellerName}</span>
+                  </div>
+                  {/* 담당자 배정 — 활성 관리자 목록에서 선택(변경 시 처리 이력에 자동 기록) */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">담당자</span>
+                    <select
+                      className="input w-36 py-1.5 text-xs"
+                      value={selected.manager}
+                      onChange={e => changeManager(e.target.value)}
+                    >
+                      <option value="미배정">미배정</option>
+                      {/* 비활성 전환 등으로 목록에 없는 기존 담당자도 현재 값으로 표시되도록 유지 */}
+                      {selected.manager !== '미배정' && !admins.some(a => a.name === selected.manager) && (
+                        <option value={selected.manager}>{selected.manager}</option>
+                      )}
+                      {admins.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                    </select>
+                  </div>
                 </div>
 
                 {/* 블랙컨슈머/중복 문의 판별용 과거 이력 */}
