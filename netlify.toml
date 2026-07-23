@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# BrowserRouter를 쓰므로 "/"가 아닌 경로로 직접 접속하거나 새로고침하면
+# Netlify가 해당 경로의 정적 파일을 찾다가 404를 내는데, 이를 막고 index.html로 라우팅을 위임한다.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
