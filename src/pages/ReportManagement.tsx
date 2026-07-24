@@ -59,7 +59,9 @@ const SELLER_REPLY_TEMPLATES = [
  * [백엔드 연동 안내] Supabase 실연동 완료.
  * - 목록/이력: reports · report_logs 테이블 (fetchReports / fetchReportLogs)
  * - 상태 변경·담당자 배정·내부 메모: updateReport(직접 UPDATE) + addReportLog 로 처리 이력 기록
- * - 환불: admin_report_refund RPC(reportRefund) — 서버가 환불 처리와 refund 로그를 자동 기록
+ * - 환불: reportRefund() — 연결 주문이 토스 결제 건(payment_key 보유)이면 Edge Function toss-cancel 로 PG
+ *   결제취소를 선행(cancelReason='신고 건 환불: 접수번호', 실패 시 DB 환불 중단) 후 admin_report_refund RPC —
+ *   서버가 환불 처리와 refund 로그를 자동 기록
  * - 내부 메모(admin_memo)는 CS 전용 비공개 필드 — 사용자/판매자 앱 응답에 노출 금지.
  * - 답변 템플릿(USER/SELLER_REPLY_TEMPLATES)은 프론트 하드코딩 — 운영팀 직접 관리가 필요해지면
  *   reply_templates 테이블 + 관리 화면 별도 필요.

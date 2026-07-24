@@ -97,6 +97,7 @@ export interface Order {
   quantity: number;
   status: OrderStatus; // seller_status
   paymentStatus: PaymentStatus;
+  paymentKey?: string; // 토스페이먼츠 paymentKey — 있으면 환불 시 PG 결제취소(toss-cancel) 선행
   pickupTime: string;
   orderedAt: string;
   memo?: string;

@@ -113,6 +113,7 @@ export function mapOrder(row: any): Order {
     quantity: row.quantity ?? 1,
     status: ORDER_STATUS_KO[row.seller_status] ?? '신규접수',
     paymentStatus: PAYMENT_STATUS_KO[row.payment_status] ?? '결제완료',
+    paymentKey: row.payment_key ?? undefined,
     pickupTime: fmtPickupWindow(row.pickup_start, row.pickup_end),
     orderedAt: fmtDateTime(row.ordered_at),
     memo: row.admin_memo ?? undefined,
@@ -352,7 +353,36 @@ export async function setOrderStatus(orderId: string, statusKo: Order['status'],
   return mapOrder(data);
 }
 
+/** Edge Function toss-cancel 호출 — 토스페이먼츠 결제취소. 실패 시 throw(에러 응답 { error } 메시지 추출). */
+async function invokeTossCancel(paymentKey: string, cancelReason: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('toss-cancel', {
+    body: { paymentKey, cancelReason },
+  });
+  if (error) {
+    let message = error.message ?? '알 수 없는 오류';
+    try {
+      const body = await (error as any).context?.json?.();
+      if (body?.error) message = body.error;
+    } catch { /* 에러 응답 본문 파싱 실패 시 기본 메시지 유지 */ }
+    throw new Error(`토스 결제취소 실패: ${message}`);
+  }
+  if (!data || data.ok !== true) throw new Error('토스 결제취소 실패: 응답이 올바르지 않습니다.');
+}
+
+/**
+ * 주문에 payment_key 가 있으면 DB 환불 전에 토스 결제취소를 선행. 취소 실패 시 throw → DB 환불 중단.
+ * payment_key 없는 주문(테스트 데이터/토스 도입 전)과 이미 환불된 주문(RPC 가 'already refunded' 처리)은 건너뛴다.
+ */
+async function cancelTossForOrder(orderId: string, cancelReason: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('orders').select('payment_key, payment_status').eq('id', orderId).maybeSingle();
+  throwIf(error);
+  if (!data?.payment_key || data.payment_status === 'refunded') return;
+  await invokeTossCancel(data.payment_key, cancelReason);
+}
+
 export async function refundOrder(orderId: string, reason?: string): Promise<Order> {
+  await cancelTossForOrder(orderId, reason?.trim() || '관리자 환불 처리');
   const { data, error } = await supabase.rpc('admin_refund_order', {
     p_order_id: orderId, p_reason: reason ?? null,
   });
@@ -462,6 +492,14 @@ export async function addReportLog(reportId: string, adminName: string, kind: 's
 }
 
 export async function reportRefund(reportId: string, reason?: string): Promise<Report> {
+  // 연결 주문이 토스 결제 건이면 RPC(admin_report_refund → admin_refund_order) 전에 PG 결제취소를 선행.
+  const { data: report, error: reportError } = await supabase
+    .from('reports').select('order_id, receipt_code').eq('id', reportId).maybeSingle();
+  throwIf(reportError);
+  if (report?.order_id) {
+    const fallback = report.receipt_code ? `신고 건 환불: ${report.receipt_code}` : '신고 건 환불 처리';
+    await cancelTossForOrder(report.order_id, reason?.trim() || fallback);
+  }
   const { data, error } = await supabase.rpc('admin_report_refund', {
     p_report_id: reportId, p_reason: reason ?? null,
   });

@@ -16,7 +16,8 @@ import type { Order, OrderStatus } from '../types';
  * [백엔드 연동 안내] Supabase 실데이터 연동 완료.
  * - 목록: fetchOrders() — `orders` 테이블(판매자 앱과 공유), 최신 1000건.
  * - 상태 변경: setOrderStatus() — RPC admin_set_order_status(사유 필수, 서버가 감사 로그 기록).
- * - 환불: refundOrder() — RPC admin_refund_order → paymentStatus='환불완료', status='취소'.
+ * - 환불: refundOrder() — 토스 결제 건(payment_key 보유)은 Edge Function toss-cancel 로 PG 결제취소 선행 후
+ *   RPC admin_refund_order → paymentStatus='환불완료', status='취소'. PG 취소 실패 시 DB 환불도 중단된다.
  * - safeNumber(050 안심번호)는 통신사 연동 결과이므로 관리자는 조회만 하고 발급/해제는 판매자 앱/PG 쪽 로직을 따른다.
  * - 관리자 메모는 표시 전용(저장 액션 없음).
  */
@@ -35,6 +36,7 @@ export default function OrderManagement() {
   const [newStatus, setNewStatus] = useState<OrderStatus>('신규접수');
   const [changeReason, setChangeReason] = useState('');
   const [refundModal, setRefundModal] = useState(false);
+  const [refundReason, setRefundReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   useEffect(() => {
@@ -102,10 +104,12 @@ export default function OrderManagement() {
   const handleRefund = async () => {
     if (!selected) return;
     try {
-      await refundOrder(selected.id);
+      // 환불 사유는 토스 결제취소(toss-cancel)의 cancelReason 및 주문 cancel_reason 으로 전달된다.
+      await refundOrder(selected.id, refundReason.trim() || undefined);
       setOrders(prev => prev.map(o => o.id === selected.id ? { ...o, status: '취소', paymentStatus: '환불완료' } : o));
       setSelected(prev => prev ? { ...prev, status: '취소', paymentStatus: '환불완료' } : null);
       setRefundModal(false);
+      setRefundReason('');
       alert('환불 처리가 완료되었습니다. (로그 기록됨)');
     } catch (e) {
       alert('처리 실패: ' + (e as Error).message);
@@ -263,17 +267,18 @@ export default function OrderManagement() {
       </Modal>
 
       {/* Refund Modal */}
-      <Modal open={refundModal} onClose={() => setRefundModal(false)} title="환불 처리">
+      <Modal open={refundModal} onClose={() => { setRefundModal(false); setRefundReason(''); }} title="환불 처리">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             <strong>{selected?.buyerName}</strong>님의 주문 ({selected?.orderNumber})을 환불 처리합니다.
           </p>
           <p className="text-sm font-semibold text-charcoal">환불 금액: {selected?.totalPrice.toLocaleString()}원</p>
+          <textarea className="input h-24 resize-none" placeholder="환불 사유를 입력하세요. (토스 결제취소 사유로 전달, 미입력 시 '관리자 환불 처리')" value={refundReason} onChange={e => setRefundReason(e.target.value)} maxLength={200} />
           <div className="bg-yellow-50 rounded-lg p-3">
-            <p className="text-xs text-yellow-700">⚠️ 환불 처리 후 되돌릴 수 없으며, 모든 이력이 로그에 기록됩니다.</p>
+            <p className="text-xs text-yellow-700">⚠️ 환불 처리 후 되돌릴 수 없으며, 모든 이력이 로그에 기록됩니다. 토스 결제 건은 PG 결제취소가 함께 진행됩니다.</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setRefundModal(false)} className="btn-secondary flex-1">취소</button>
+            <button onClick={() => { setRefundModal(false); setRefundReason(''); }} className="btn-secondary flex-1">취소</button>
             <button onClick={handleRefund} className="btn-warning flex-1">환불 처리</button>
           </div>
         </div>
