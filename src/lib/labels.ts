@@ -128,12 +128,29 @@ export function fmtTime(iso: string | null | undefined): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 픽업 시간 표기: pickup_start/end → 'HH:mm' 또는 'HH:mm~HH:mm' */
-export function fmtPickupWindow(start: string | null | undefined, end: string | null | undefined): string {
-  const s = fmtTime(start);
-  const e = fmtTime(end);
-  if (s && e) return `${s}~${e}`;
-  return s || e || '-';
+/**
+ * 픽업 마감 시각 표기: orders.pickup_deadline_at → 'YYYY.MM.DD HH:mm 까지'.
+ * pickup_deadline_at 이 비어 있으면 ordered_at + pickup_deadline_minutes(기본 60분)로 계산해 폴백한다.
+ * (픽업 시간대(pickup_start~pickup_end) 개념은 '주문 후 N분 이내 마감' 으로 대체됨 — 20260728000000 마이그레이션)
+ */
+export function fmtPickupDeadline(
+  deadlineAt: string | null | undefined,
+  orderedAt?: string | null,
+  minutes?: number | null,
+): string {
+  let d: Date | null = deadlineAt ? new Date(deadlineAt) : null;
+  if ((!d || Number.isNaN(d.getTime())) && orderedAt) {
+    const base = new Date(orderedAt);
+    if (!Number.isNaN(base.getTime())) d = new Date(base.getTime() + (minutes ?? 60) * 60000);
+  }
+  if (!d || Number.isNaN(d.getTime())) return '-';
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} 까지`;
+}
+
+/** 픽업 마감(분) 표기: 60 → '주문 후 60분 이내' */
+export function fmtPickupDeadlineMinutes(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(Number(minutes))) return '-';
+  return `주문 후 ${Number(minutes)}분 이내`;
 }
 
 /** 주소 → '서울 강남' 형태의 지역 라벨(시/도 + 시/군/구, 표시·필터용 파생) */

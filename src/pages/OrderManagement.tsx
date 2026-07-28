@@ -80,7 +80,7 @@ export default function OrderManagement() {
           '주문상태': o.status,
           '결제상태': o.paymentStatus,
           '안심번호': o.safeNumber,
-          '픽업시간': o.pickupTime,
+          '픽업 마감': o.pickupTime,
           '주문일시': o.orderedAt,
         })),
       }],
@@ -140,7 +140,7 @@ export default function OrderManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['주문번호', '구매자', '판매자', '상품명', '결제금액', '주문상태', '결제상태', '픽업시간', '주문일시', '관리'].map(h => (
+                  {['주문번호', '구매자', '판매자', '상품명', '결제금액', '주문상태', '결제상태', '픽업 마감', '주문일시', '관리'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -165,7 +165,7 @@ export default function OrderManagement() {
                     <td className="px-4 py-3 font-medium">{order.totalPrice.toLocaleString()}원</td>
                     <td className="px-4 py-3"><Badge type="order">{order.status}</Badge></td>
                     <td className="px-4 py-3"><Badge type="payment">{order.paymentStatus}</Badge></td>
-                    <td className="px-4 py-3 text-gray-500">{order.pickupTime}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{order.pickupTime}</td>
                     <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{order.orderedAt}</td>
                     <td className="px-4 py-3">
                       <button className="text-xs text-primary hover:underline flex items-center gap-1" onClick={e => { e.stopPropagation(); setSelected(order); }}>
@@ -210,7 +210,7 @@ export default function OrderManagement() {
                     ['결제금액', `${selected.totalPrice.toLocaleString()}원`],
                     ['수량', `${selected.quantity}개`],
                     ['주문일시', selected.orderedAt],
-                    ['픽업시간', selected.pickupTime],
+                    ['픽업 마감', selected.pickupTime],
                   ].map(([label, value]) => (
                     <div key={label as string} className="flex justify-between items-center">
                       <span className="text-gray-500">{label}</span>

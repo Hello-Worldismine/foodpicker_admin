@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
-import { Search, Eye, CheckCircle, XCircle, EyeOff, AlertTriangle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, Eye, CheckCircle, XCircle, EyeOff, AlertTriangle, Image as ImageIcon } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
 import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
+import Lightbox, { type LightboxItem } from '../components/ui/Lightbox';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { fetchProducts, setProductStatus } from '../lib/api';
+import { fmtPickupDeadlineMinutes } from '../lib/labels';
 import type { Product, ProductStatus } from '../types';
 
 // 판매자 앱은 상품 등록 즉시 '판매중' 상태로 게시하므로(사전 검수 단계 없음),
@@ -17,6 +19,9 @@ import type { Product, ProductStatus } from '../types';
  * - 목록: fetchProducts() → admin_products 뷰(products + 매장명/신고수 조인)
  * - 숨김/판매중지/판매 재개: setProductStatus(id, '숨김'|'판매중지'|'판매중', reason?) → admin_set_product_status RPC(감사 로그 서버 자동 기록)
  *   판매 재개 시 서버가 소비기한 경과 여부를 재검증하고, 재고 0이면 트리거가 품절로 전환하므로 성공 후 목록을 전체 refetch 한다.
+ * - 등록 사진: admin_products 뷰가 products 의 thumbnail/images/emoji 를 그대로 노출한다.
+ *   product-images 버킷은 public 이라 public URL 을 <img> 로 바로 렌더할 수 있다.
+ * - 픽업은 '주문 후 N분 이내 마감'(products.pickup_deadline_minutes, 20260728 마이그레이션) — 픽업 시간대 표기는 폐기.
  * 참고: 자동할인(startPrice/floorPrice/reductionAmount/intervalMinutes)은 판매자 앱이 스케줄링하는 필드로, 관리자는 조회만 한다.
  */
 const STATUS_OPTIONS: ProductStatus[] = ['판매중', '품절', '판매중지', '숨김'];
@@ -26,11 +31,17 @@ function isExpired(expiryDate: string) {
   return new Date(expiryDate) < new Date();
 }
 
-function isPickupAfterExpiry(pickupEnd: string, expiryDate: string, productDate: string) {
-  const base = productDate.split(' ')[0];
-  const pickupEndTime = new Date(`${base} ${pickupEnd}`);
-  const expiry = new Date(expiryDate);
-  return pickupEndTime > expiry;
+/**
+ * 지금 주문이 들어오면 픽업 마감(주문시각 + pickup_deadline_minutes)이 소비기한을 넘기는지 검사.
+ * 픽업이 '주문 후 N분 이내' 로 바뀌면서 마감 시각은 주문 시점마다 달라지므로, 상시 성립하는 조건이 아니라
+ * '넘길 수 있음' 경고로만 쓴다(이미 소비기한이 지난 상품은 별도 경고가 나가므로 제외).
+ */
+function deadlineMayExceedExpiry(p: Product) {
+  if (p.pickupDeadlineMinutes == null) return false;
+  const expiry = new Date(p.expiryDate);
+  if (Number.isNaN(expiry.getTime())) return false;
+  if (expiry.getTime() <= Date.now()) return false;
+  return Date.now() + p.pickupDeadlineMinutes * 60000 > expiry.getTime();
 }
 
 export default function ProductManagement() {
@@ -42,9 +53,23 @@ export default function ProductManagement() {
   const [categoryFilter, setCategoryFilter] = useState('전체');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Product | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [actionModal, setActionModal] = useState<'hide' | 'stop' | null>(null);
   const [actionReason, setActionReason] = useState('');
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  // 상세 선택 시 열려 있던 라이트박스는 항상 닫는다(다른 상품 사진이 그대로 남지 않도록)
+  const selectProduct = (product: Product | null) => {
+    setSelected(product);
+    setLightboxIndex(null);
+  };
+
+  // 등록 사진 — images 우선, 없으면 thumbnail 1장. 그리드와 라이트박스가 같은 배열을 공유한다.
+  const media = useMemo<LightboxItem[]>(() => {
+    if (!selected) return [];
+    const urls = selected.images ?? (selected.thumbnail ? [selected.thumbnail] : []);
+    return urls.map((url, i) => ({ type: 'image' as const, url, label: `${selected.name} (${i + 1})` }));
+  }, [selected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,8 +113,8 @@ export default function ProductManagement() {
           '할인율(%)': p.discountRate,
           '재고': p.stock,
           '소비기한': p.expiryDate,
-          '픽업시작': p.pickupStart,
-          '픽업종료': p.pickupEnd,
+          '픽업 마감(분)': p.pickupDeadlineMinutes ?? '',
+          '등록사진수': p.images?.length ?? (p.thumbnail ? 1 : 0),
           '보관방법': p.storageDetail ? `${p.storage}(${p.storageDetail})` : p.storage,
           '알레르기정보': p.allergyInfo,
           '원산지': p.originInfo,
@@ -106,7 +131,7 @@ export default function ProductManagement() {
   const refetchProducts = async (selectedId?: string) => {
     const rows = await fetchProducts();
     setProducts(rows);
-    if (selectedId) setSelected(rows.find(p => p.id === selectedId) ?? null);
+    if (selectedId) selectProduct(rows.find(p => p.id === selectedId) ?? null);
   };
 
   const handleResume = async (product: Product) => {
@@ -139,7 +164,7 @@ export default function ProductManagement() {
   const getWarnings = (p: Product) => {
     const warnings: string[] = [];
     if (isExpired(p.expiryDate)) warnings.push('소비기한 경과');
-    if (isPickupAfterExpiry(p.pickupEnd, p.expiryDate, p.registeredAt)) warnings.push('픽업종료 > 소비기한');
+    if (deadlineMayExceedExpiry(p)) warnings.push(`주문 후 ${p.pickupDeadlineMinutes}분 마감이 소비기한을 넘길 수 있음`);
     if (p.reportCount >= 3) warnings.push(`신고 ${p.reportCount}건`);
     if (p.salePrice === 0) warnings.push('판매가 0원');
     return warnings;
@@ -190,10 +215,18 @@ export default function ProductManagement() {
                     <tr
                       key={product.id}
                       className={`border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors ${selected?.id === product.id ? 'bg-primary-light' : ''}`}
-                      onClick={() => setSelected(product)}
+                      onClick={() => selectProduct(product)}
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
+                          {/* 사진 유무를 목록에서 바로 보이게 — 없으면 이모지, 이모지도 없으면 아이콘 */}
+                          {product.imageUrl ? (
+                            <img src={product.imageUrl} alt="" className="w-8 h-8 rounded-md object-cover border border-gray-100 flex-shrink-0" />
+                          ) : (
+                            <span className="w-8 h-8 rounded-md bg-soft-gray border border-gray-100 flex items-center justify-center text-sm flex-shrink-0">
+                              {product.emoji || <ImageIcon size={12} className="text-gray-300" />}
+                            </span>
+                          )}
                           <span className="font-medium text-charcoal">{product.name}</span>
                           {warnings.length > 0 && <AlertTriangle size={13} className="text-warm-orange flex-shrink-0" />}
                         </div>
@@ -208,7 +241,7 @@ export default function ProductManagement() {
                       <td className="px-4 py-3"><Badge type="product">{product.status}</Badge></td>
                       <td className="px-4 py-3"><span className={product.reportCount >= 3 ? 'text-alert-red font-semibold' : 'text-gray-600'}>{product.reportCount}</span></td>
                       <td className="px-4 py-3">
-                        <button className="text-xs text-primary hover:underline flex items-center gap-1" onClick={e => { e.stopPropagation(); setSelected(product); }}>
+                        <button className="text-xs text-primary hover:underline flex items-center gap-1" onClick={e => { e.stopPropagation(); selectProduct(product); }}>
                           <Eye size={13} /> 상세
                         </button>
                       </td>
@@ -228,9 +261,38 @@ export default function ProductManagement() {
           <div className="card w-full xl:w-96 flex-shrink-0 overflow-y-auto max-h-[calc(100vh-8rem)]">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h3 className="font-semibold text-charcoal truncate pr-4">{selected.name}</h3>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-charcoal text-xl leading-none flex-shrink-0">×</button>
+              <button onClick={() => selectProduct(null)} className="text-gray-400 hover:text-charcoal text-xl leading-none flex-shrink-0">×</button>
             </div>
             <div className="p-5 space-y-5">
+              {/* 판매자 앱에서 등록한 사진 미리보기 — 클릭하면 라이트박스로 원본 확대 */}
+              <section>
+                <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">
+                  등록 사진{media.length > 0 ? ` (${media.length})` : ''}
+                </p>
+                {media.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {media.map((item, i) => (
+                      <button
+                        key={`${item.url}-${i}`}
+                        onClick={() => setLightboxIndex(i)}
+                        className="relative block aspect-square rounded-lg overflow-hidden border border-gray-100 hover:opacity-80 transition-opacity"
+                      >
+                        <img src={item.url} alt={`상품 사진 ${i + 1}`} className="w-full h-full object-cover" />
+                        <span className="absolute bottom-1 right-1 bg-black/50 rounded p-0.5">
+                          <ImageIcon size={10} className="text-white" />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : selected.emoji ? (
+                  <div className="aspect-video rounded-lg bg-soft-gray border border-gray-100 flex items-center justify-center text-5xl">
+                    {selected.emoji}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 bg-soft-gray rounded-lg py-6 text-center">등록된 사진이 없습니다.</p>
+                )}
+              </section>
+
               {/* Warnings */}
               {getWarnings(selected).length > 0 && (
                 <div className="bg-red-50 border border-red-100 rounded-lg p-3">
@@ -271,8 +333,7 @@ export default function ProductManagement() {
                     ['할인율', `${selected.discountRate}%`],
                     ['재고', `${selected.stock}개`],
                     ['소비기한', selected.expiryDate],
-                    ['픽업 시작', selected.pickupStart],
-                    ['픽업 종료', selected.pickupEnd],
+                    ['픽업 마감', fmtPickupDeadlineMinutes(selected.pickupDeadlineMinutes)],
                   ].map(([label, value]) => (
                     <div key={label as string} className="flex justify-between">
                       <span className="text-gray-500">{label}</span>
@@ -341,6 +402,16 @@ export default function ProductManagement() {
           </div>
         </div>
       </Modal>
+
+      {/* 등록 사진 라이트박스 — 상세 그리드와 동일한 media 배열 공유 */}
+      {media.length > 0 && lightboxIndex !== null && (
+        <Lightbox
+          items={media}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
+      )}
 
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>

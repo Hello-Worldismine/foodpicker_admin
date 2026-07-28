@@ -65,8 +65,8 @@ export interface Product {
   intervalMinutes?: number; // 자동할인 주기(분)
   stock: number;
   expiryDate: string;
-  pickupStart: string;
-  pickupEnd: string;
+  // 픽업은 '주문 후 N분 이내 마감' 방식(products.pickup_deadline_minutes) — 픽업 시간대 개념은 폐기됨
+  pickupDeadlineMinutes?: number;
   status: ProductStatus;
   pauseReason?: ProductPauseReason;
   reportCount: number;
@@ -77,7 +77,10 @@ export interface Product {
   allergyInfo: string;
   originInfo: string;
   description: string;
-  imageUrl?: string;
+  emoji?: string; // 사진 미등록 상품의 대체 표시(판매자 앱이 고른 이모지)
+  thumbnail?: string; // 대표 사진 URL(product-images 버킷 public URL)
+  images?: string[]; // 판매자가 등록한 사진 전체 — 상세 미리보기/라이트박스용
+  imageUrl?: string; // thumbnail ?? images[0] — 목록 썸네일용 파생값
   memo?: string;
 }
 
@@ -98,7 +101,8 @@ export interface Order {
   status: OrderStatus; // seller_status
   paymentStatus: PaymentStatus;
   paymentKey?: string; // 토스페이먼츠 paymentKey — 있으면 환불 시 PG 결제취소(toss-cancel) 선행
-  pickupTime: string;
+  pickupDeadlineMinutes?: number; // 주문 시점에 스냅샷된 픽업 마감(분)
+  pickupTime: string; // 픽업 마감 시각 표기('YYYY.MM.DD HH:mm 까지') — pickup_deadline_at 기반
   orderedAt: string;
   memo?: string;
 }

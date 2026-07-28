@@ -14,7 +14,7 @@ import {
   COUPON_SOURCE_KO, COUPON_REQUEST_KO,
   BANNER_POSITION_KO, BANNER_POSITION_EN, NOTICE_TARGET_KO, NOTICE_TARGET_EN,
   FAQ_CATEGORY_KO, FAQ_CATEGORY_EN,
-  fmtDate, fmtDateTime, fmtPickupWindow, regionFromAddress, maskResidentNumber,
+  fmtDate, fmtDateTime, fmtPickupDeadline, regionFromAddress, maskResidentNumber,
 } from './labels';
 import type {
   Seller, SellerStatus, Product, Order, Settlement, Report, ReportStatus, Review, ReviewStatus,
@@ -63,7 +63,22 @@ export function mapSeller(row: any): Seller {
   };
 }
 
+/** 사진 목록 정규화 — products.images 가 text[] / jsonb / (문자열 그대로) 어느 형태로 내려와도
+ *  유효한 URL 문자열만 남긴다. 빈 배열은 undefined 로 접어 UI 분기(사진 없음)를 단순화한다. */
+function toImageList(value: any): string[] | undefined {
+  let raw: any = value;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    try { raw = JSON.parse(trimmed); } catch { raw = [trimmed]; }
+  }
+  if (!Array.isArray(raw)) return undefined;
+  const urls = raw.filter((v: unknown): v is string => typeof v === 'string' && v.trim() !== '');
+  return urls.length > 0 ? urls : undefined;
+}
+
 export function mapProduct(row: any): Product {
+  const images = toImageList(row.images);
   return {
     id: row.id,
     name: row.name ?? '',
@@ -79,8 +94,7 @@ export function mapProduct(row: any): Product {
     intervalMinutes: row.interval_minutes ?? undefined,
     stock: row.stock ?? 0,
     expiryDate: fmtDateTime(row.expiry_date),
-    pickupStart: row.pickup_start ? fmtDateTime(row.pickup_start).slice(11) : '',
-    pickupEnd: row.pickup_end ? fmtDateTime(row.pickup_end).slice(11) : '',
+    pickupDeadlineMinutes: row.pickup_deadline_minutes ?? undefined,
     status: PRODUCT_STATUS_KO[row.status] ?? '판매중',
     pauseReason: row.pause_reason ? PAUSE_REASON_KO[row.pause_reason] : undefined,
     reportCount: row.report_count ?? 0,
@@ -91,7 +105,10 @@ export function mapProduct(row: any): Product {
     allergyInfo: Array.isArray(row.allergens) && row.allergens.length > 0 ? row.allergens.join(', ') : '없음',
     originInfo: row.origin ?? '',
     description: row.description ?? '',
-    imageUrl: row.thumbnail ?? (Array.isArray(row.images) ? row.images[0] : undefined) ?? '',
+    emoji: row.emoji ?? undefined,
+    thumbnail: row.thumbnail ?? undefined,
+    images,
+    imageUrl: row.thumbnail ?? images?.[0] ?? '',
     memo: row.admin_memo ?? (row.status === 'hidden' ? row.reject_reason ?? '' : ''),
   };
 }
@@ -114,7 +131,9 @@ export function mapOrder(row: any): Order {
     status: ORDER_STATUS_KO[row.seller_status] ?? '신규접수',
     paymentStatus: PAYMENT_STATUS_KO[row.payment_status] ?? '결제완료',
     paymentKey: row.payment_key ?? undefined,
-    pickupTime: fmtPickupWindow(row.pickup_start, row.pickup_end),
+    pickupDeadlineMinutes: row.pickup_deadline_minutes ?? undefined,
+    // 픽업 마감 시각 — pickup_deadline_at 우선, 없으면 ordered_at + pickup_deadline_minutes 로 계산
+    pickupTime: fmtPickupDeadline(row.pickup_deadline_at, row.ordered_at, row.pickup_deadline_minutes),
     orderedAt: fmtDateTime(row.ordered_at),
     memo: row.admin_memo ?? undefined,
   };
@@ -319,10 +338,25 @@ export async function setStoreMemo(storeId: string, memo: string): Promise<void>
 // ============================================================================
 
 export async function fetchProducts(): Promise<Product[]> {
-  const { data, error } = await supabase
-    .from('admin_products').select('*').order('created_at', { ascending: false });
-  throwIf(error);
-  return (data ?? []).map(mapProduct);
+  // admin_products 뷰는 20260716 마이그레이션에서 `select p.*` 로 생성됐고 뷰의 컬럼 목록은 생성 시점에 고정된다.
+  // → 이후 추가된 products.pickup_deadline_minutes(20260728)는 뷰에 없을 수 있으므로 products 에서 직접 보충한다.
+  //   (products_admin_select 정책으로 관리자는 전 행 조회 가능. 조회 실패 시엔 마감(분) 표기만 '-' 로 떨어진다.)
+  const [viewRes, deadlineRes] = await Promise.all([
+    supabase.from('admin_products').select('*').order('created_at', { ascending: false }),
+    supabase.from('products').select('id, pickup_deadline_minutes'),
+  ]);
+  throwIf(viewRes.error);
+
+  const deadlines = new Map<string, number>();
+  if (!deadlineRes.error) {
+    for (const row of (deadlineRes.data ?? []) as any[]) {
+      if (row.pickup_deadline_minutes != null) deadlines.set(row.id, row.pickup_deadline_minutes);
+    }
+  }
+  return (viewRes.data ?? []).map((row: any) => mapProduct({
+    ...row,
+    pickup_deadline_minutes: row.pickup_deadline_minutes ?? deadlines.get(row.id) ?? null,
+  }));
 }
 
 /** 상태 변경(한글 라벨 입력): '숨김'/'판매중지'/'판매중' */
