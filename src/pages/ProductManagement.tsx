@@ -9,7 +9,7 @@ import Toast from '../components/ui/Toast';
 import Lightbox, { type LightboxItem } from '../components/ui/Lightbox';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { fetchProducts, setProductStatus } from '../lib/api';
-import { fmtPickupDeadlineMinutes } from '../lib/labels';
+import { fmtProductPickupDeadline } from '../lib/labels';
 import type { Product, ProductStatus } from '../types';
 
 // 판매자 앱은 상품 등록 즉시 '판매중' 상태로 게시하므로(사전 검수 단계 없음),
@@ -21,7 +21,9 @@ import type { Product, ProductStatus } from '../types';
  *   판매 재개 시 서버가 소비기한 경과 여부를 재검증하고, 재고 0이면 트리거가 품절로 전환하므로 성공 후 목록을 전체 refetch 한다.
  * - 등록 사진: admin_products 뷰가 products 의 thumbnail/images/emoji 를 그대로 노출한다.
  *   product-images 버킷은 public 이라 public URL 을 <img> 로 바로 렌더할 수 있다.
- * - 픽업은 '주문 후 N분 이내 마감'(products.pickup_deadline_minutes, 20260728 마이그레이션) — 픽업 시간대 표기는 폐기.
+ * - 픽업 마감은 '마감 시각'(products.pickup_deadline_at, 20260730 마이그레이션) — 구 '주문 후 N분'(pickup_deadline_minutes)은 폐기.
+ *   마감이 지난 상품은 서버 배치(expire_products)가 pause_reason='pickup_closed' 로 자동 판매중지하며,
+ *   배치 주기 사이의 공백을 감안해 목록에서도 마감 경과 상품을 '마감' 뱃지 + 회색 처리로 구분한다.
  * 참고: 자동할인(startPrice/floorPrice/reductionAmount/intervalMinutes)은 판매자 앱이 스케줄링하는 필드로, 관리자는 조회만 한다.
  */
 const STATUS_OPTIONS: ProductStatus[] = ['판매중', '품절', '판매중지', '숨김'];
@@ -31,17 +33,26 @@ function isExpired(expiryDate: string) {
   return new Date(expiryDate) < new Date();
 }
 
+/** 픽업 마감 시각이 이미 지났는지(마감 경과 상품은 더 이상 주문될 수 없다). */
+function isPickupClosed(p: Product) {
+  if (!p.pickupDeadlineAt) return false;
+  const deadline = new Date(p.pickupDeadlineAt);
+  if (Number.isNaN(deadline.getTime())) return false;
+  return deadline.getTime() < Date.now();
+}
+
 /**
- * 지금 주문이 들어오면 픽업 마감(주문시각 + pickup_deadline_minutes)이 소비기한을 넘기는지 검사.
- * 픽업이 '주문 후 N분 이내' 로 바뀌면서 마감 시각은 주문 시점마다 달라지므로, 상시 성립하는 조건이 아니라
- * '넘길 수 있음' 경고로만 쓴다(이미 소비기한이 지난 상품은 별도 경고가 나가므로 제외).
+ * 픽업 마감 시각이 소비기한을 넘는지 검사(pickup_deadline_at > expiry_date).
+ * DB 제약(products_pickup_deadline_at_chk)이 이 조합을 막지만, 제약 이전에 들어온 구 데이터 방어용으로 남긴다.
+ * 이미 소비기한이 지난 상품은 별도 경고가 나가므로 제외한다.
  */
 function deadlineMayExceedExpiry(p: Product) {
-  if (p.pickupDeadlineMinutes == null) return false;
+  if (!p.pickupDeadlineAt) return false;
+  const deadline = new Date(p.pickupDeadlineAt);
   const expiry = new Date(p.expiryDate);
-  if (Number.isNaN(expiry.getTime())) return false;
+  if (Number.isNaN(deadline.getTime()) || Number.isNaN(expiry.getTime())) return false;
   if (expiry.getTime() <= Date.now()) return false;
-  return Date.now() + p.pickupDeadlineMinutes * 60000 > expiry.getTime();
+  return deadline.getTime() > expiry.getTime();
 }
 
 export default function ProductManagement() {
@@ -113,7 +124,7 @@ export default function ProductManagement() {
           '할인율(%)': p.discountRate,
           '재고': p.stock,
           '소비기한': p.expiryDate,
-          '픽업 마감(분)': p.pickupDeadlineMinutes ?? '',
+          '픽업 마감': fmtProductPickupDeadline(p.pickupDeadlineAt),
           '등록사진수': p.images?.length ?? (p.thumbnail ? 1 : 0),
           '보관방법': p.storageDetail ? `${p.storage}(${p.storageDetail})` : p.storage,
           '알레르기정보': p.allergyInfo,
@@ -164,7 +175,7 @@ export default function ProductManagement() {
   const getWarnings = (p: Product) => {
     const warnings: string[] = [];
     if (isExpired(p.expiryDate)) warnings.push('소비기한 경과');
-    if (deadlineMayExceedExpiry(p)) warnings.push(`주문 후 ${p.pickupDeadlineMinutes}분 마감이 소비기한을 넘길 수 있음`);
+    if (deadlineMayExceedExpiry(p)) warnings.push(`픽업 마감(${fmtProductPickupDeadline(p.pickupDeadlineAt)})이 소비기한 이후`);
     if (p.reportCount >= 3) warnings.push(`신고 ${p.reportCount}건`);
     if (p.salePrice === 0) warnings.push('판매가 0원');
     return warnings;
@@ -211,23 +222,26 @@ export default function ProductManagement() {
                   <tr><td colSpan={11}><EmptyState /></td></tr>
                 ) : paginated.map(product => {
                   const warnings = getWarnings(product);
+                  // 픽업 마감이 지난 상품은 더 이상 주문될 수 없다 → 행 전체를 흐리게 + '마감' 뱃지로 구분
+                  const closed = isPickupClosed(product);
                   return (
                     <tr
                       key={product.id}
-                      className={`border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors ${selected?.id === product.id ? 'bg-primary-light' : ''}`}
+                      className={`border-b border-gray-50 hover:bg-soft-gray/50 cursor-pointer transition-colors ${selected?.id === product.id ? 'bg-primary-light' : ''} ${closed ? 'opacity-60' : ''}`}
                       onClick={() => selectProduct(product)}
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           {/* 사진 유무를 목록에서 바로 보이게 — 없으면 이모지, 이모지도 없으면 아이콘 */}
                           {product.imageUrl ? (
-                            <img src={product.imageUrl} alt="" className="w-8 h-8 rounded-md object-cover border border-gray-100 flex-shrink-0" />
+                            <img src={product.imageUrl} alt="" className={`w-8 h-8 rounded-md object-cover border border-gray-100 flex-shrink-0 ${closed ? 'grayscale' : ''}`} />
                           ) : (
                             <span className="w-8 h-8 rounded-md bg-soft-gray border border-gray-100 flex items-center justify-center text-sm flex-shrink-0">
                               {product.emoji || <ImageIcon size={12} className="text-gray-300" />}
                             </span>
                           )}
-                          <span className="font-medium text-charcoal">{product.name}</span>
+                          <span className={`font-medium ${closed ? 'text-gray-500' : 'text-charcoal'}`}>{product.name}</span>
+                          {closed && <Badge variant="gray">마감</Badge>}
                           {warnings.length > 0 && <AlertTriangle size={13} className="text-warm-orange flex-shrink-0" />}
                         </div>
                       </td>
@@ -327,13 +341,25 @@ export default function ProductManagement() {
                   {[
                     ['매장명', selected.storeName],
                     ['카테고리', selected.category],
-                    ['상태', <Badge type="product">{selected.status}</Badge>],
+                    // 판매중지 사유(소비기한 경과 / 픽업 마감 / 관리자 중지)를 뱃지 옆에 함께 보여준다.
+                    ['상태', (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Badge type="product">{selected.status}</Badge>
+                        {selected.pauseReason && <span className="text-xs text-gray-500">{selected.pauseReason}</span>}
+                      </span>
+                    )],
                     ['정가', `${selected.originalPrice.toLocaleString()}원`],
                     ['판매가', `${selected.salePrice.toLocaleString()}원`],
                     ['할인율', `${selected.discountRate}%`],
                     ['재고', `${selected.stock}개`],
                     ['소비기한', selected.expiryDate],
-                    ['픽업 마감', fmtPickupDeadlineMinutes(selected.pickupDeadlineMinutes)],
+                    // 픽업 마감은 절대 시각. 이미 지난 상품은 붉게 표시해 '주문 불가' 상태임을 드러낸다.
+                    ['픽업 마감', (
+                      <span className={isPickupClosed(selected) ? 'text-alert-red font-medium' : ''}>
+                        {fmtProductPickupDeadline(selected.pickupDeadlineAt)}
+                        {isPickupClosed(selected) ? ' (마감)' : ''}
+                      </span>
+                    )],
                   ].map(([label, value]) => (
                     <div key={label as string} className="flex justify-between">
                       <span className="text-gray-500">{label}</span>

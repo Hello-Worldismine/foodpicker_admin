@@ -16,8 +16,9 @@ export const PRODUCT_STATUS_KO: Record<string, ProductStatus> = {
 };
 export const PRODUCT_STATUS_EN = invert(PRODUCT_STATUS_KO);
 
+// pickup_closed: 픽업 마감 시각이 지나 expire_products() 배치가 자동 판매중지한 경우(20260730 마이그레이션)
 export const PAUSE_REASON_KO: Record<string, ProductPauseReason> = {
-  expiry: '소비기한 경과', manual: '관리자 중지',
+  expiry: '소비기한 경과', pickup_closed: '픽업 마감', manual: '관리자 중지',
 };
 
 // ── orders ────────────────────────────────────────────────────────────────
@@ -147,7 +148,19 @@ export function fmtPickupDeadline(
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} 까지`;
 }
 
-/** 픽업 마감(분) 표기: 60 → '주문 후 60분 이내' */
+/**
+ * 상품 픽업 마감 시각 표기: products.pickup_deadline_at → 'YYYY.MM.DD HH:mm 까지'.
+ * 주문(fmtPickupDeadline)과 달리 상품은 마감이 절대 시각 하나로 고정되므로 폴백 계산이 없다 —
+ * 값이 없으면(뷰 미적용 등) '-' 로 떨어뜨린다.
+ */
+export function fmtProductPickupDeadline(at: string | null | undefined): string {
+  if (!at) return '-';
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '-';
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} 까지`;
+}
+
+/** [DEPRECATED] 구 픽업 마감(분) 표기: 60 → '주문 후 60분 이내'. 주문의 하위호환 표시에만 쓴다. */
 export function fmtPickupDeadlineMinutes(minutes: number | null | undefined): string {
   if (minutes == null || !Number.isFinite(Number(minutes))) return '-';
   return `주문 후 ${Number(minutes)}분 이내`;

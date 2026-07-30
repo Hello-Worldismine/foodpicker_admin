@@ -94,6 +94,8 @@ export function mapProduct(row: any): Product {
     intervalMinutes: row.interval_minutes ?? undefined,
     stock: row.stock ?? 0,
     expiryDate: fmtDateTime(row.expiry_date),
+    // 픽업 마감 시각(정본) — 소비기한 비교에 쓰므로 포맷하지 않고 원본 ISO 그대로 넘긴다.
+    pickupDeadlineAt: row.pickup_deadline_at ?? undefined,
     pickupDeadlineMinutes: row.pickup_deadline_minutes ?? undefined,
     status: PRODUCT_STATUS_KO[row.status] ?? '판매중',
     pauseReason: row.pause_reason ? PAUSE_REASON_KO[row.pause_reason] : undefined,
@@ -338,24 +340,26 @@ export async function setStoreMemo(storeId: string, memo: string): Promise<void>
 // ============================================================================
 
 export async function fetchProducts(): Promise<Product[]> {
-  // admin_products 뷰는 20260716 마이그레이션에서 `select p.*` 로 생성됐고 뷰의 컬럼 목록은 생성 시점에 고정된다.
-  // → 이후 추가된 products.pickup_deadline_minutes(20260728)는 뷰에 없을 수 있으므로 products 에서 직접 보충한다.
-  //   (products_admin_select 정책으로 관리자는 전 행 조회 가능. 조회 실패 시엔 마감(분) 표기만 '-' 로 떨어진다.)
+  // admin_products 뷰는 `select p.*` 로 생성돼 뷰의 컬럼 목록이 생성 시점에 고정된다.
+  // 20260730 마이그레이션이 뷰를 재생성하며 pickup_deadline_at 을 포함시키므로 원칙적으로 보충 조회는 불필요하지만,
+  // 뷰가 아직 반영되지 않은 DB 방어를 위해 마감 컬럼 2종을 products 에서 직접 보충한다.
+  //   (products_admin_select 정책으로 관리자는 전 행 조회 가능. 조회 실패 시엔 마감 표기만 '-' 로 떨어진다.)
   const [viewRes, deadlineRes] = await Promise.all([
     supabase.from('admin_products').select('*').order('created_at', { ascending: false }),
-    supabase.from('products').select('id, pickup_deadline_minutes'),
+    supabase.from('products').select('id, pickup_deadline_minutes, pickup_deadline_at'),
   ]);
   throwIf(viewRes.error);
 
-  const deadlines = new Map<string, number>();
+  const deadlines = new Map<string, { minutes: number | null; at: string | null }>();
   if (!deadlineRes.error) {
     for (const row of (deadlineRes.data ?? []) as any[]) {
-      if (row.pickup_deadline_minutes != null) deadlines.set(row.id, row.pickup_deadline_minutes);
+      deadlines.set(row.id, { minutes: row.pickup_deadline_minutes ?? null, at: row.pickup_deadline_at ?? null });
     }
   }
   return (viewRes.data ?? []).map((row: any) => mapProduct({
     ...row,
-    pickup_deadline_minutes: row.pickup_deadline_minutes ?? deadlines.get(row.id) ?? null,
+    pickup_deadline_minutes: row.pickup_deadline_minutes ?? deadlines.get(row.id)?.minutes ?? null,
+    pickup_deadline_at: row.pickup_deadline_at ?? deadlines.get(row.id)?.at ?? null,
   }));
 }
 

@@ -5,7 +5,8 @@ export type SellerStatus = '승인대기' | '승인완료' | '반려' | '이용�
 // 상품 상태 — 실제 DB product_status enum('selling'|'soldout'|'paused'|'hidden')과 1:1 대응.
 // 판매자 앱은 등록 즉시 '판매중' 상태로 게시되므로 사전 검수 단계('검수대기' 등)는 존재하지 않는다.
 export type ProductStatus = '판매중' | '품절' | '판매중지' | '숨김';
-export type ProductPauseReason = '소비기한 경과' | '관리자 중지';
+// products.pause_reason — 'expiry'(소비기한) / 'pickup_closed'(픽업 마감 경과, expire_products()가 자동 전환) / 'manual'(관리자)
+export type ProductPauseReason = '소비기한 경과' | '픽업 마감' | '관리자 중지';
 // storage 컬럼은 실제로 3가지 값만 허용(냉장/냉동은 한글 그대로 DB에 저장됨)
 export type StorageType = '실온' | '냉장' | '냉동';
 
@@ -65,7 +66,9 @@ export interface Product {
   intervalMinutes?: number; // 자동할인 주기(분)
   stock: number;
   expiryDate: string;
-  // 픽업은 '주문 후 N분 이내 마감' 방식(products.pickup_deadline_minutes) — 픽업 시간대 개념은 폐기됨
+  // 픽업 마감 시각(절대) — products.pickup_deadline_at 원본 ISO. 판매자가 상품 등록 시 날짜+시각으로 지정한다.
+  pickupDeadlineAt?: string;
+  // [DEPRECATED] 구 '주문 후 N분 이내' 방식(products.pickup_deadline_minutes). 구 데이터 표시 호환용으로만 남긴다.
   pickupDeadlineMinutes?: number;
   status: ProductStatus;
   pauseReason?: ProductPauseReason;
