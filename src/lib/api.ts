@@ -29,6 +29,12 @@ function throwIf(error: { message: string } | null): void {
 // 매퍼
 // ============================================================================
 
+/** 좌표 정규화 — double precision 이 숫자/문자열 어느 쪽으로 내려와도 유한한 number 만 남기고 나머지는 null. */
+function toCoord(value: any): number | null {
+  const n = typeof value === 'string' ? parseFloat(value) : value;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
 function sellerStatusFrom(row: any): SellerStatus {
   // 이용정지 = 관리자 전용 플래그(suspended_by_admin). is_selling_paused 는 판매자 자율 일시중지라 별개.
   if (row.suspended_by_admin) return '이용정지';
@@ -59,6 +65,9 @@ export function mapSeller(row: any): Seller {
     accountNumber: row.account_number ?? '',
     accountHolder: row.account_holder ?? '',
     categoryMain: row.category ?? '',
+    // admin_stores 뷰는 `select s.*` 라 lat/lng 가 이미 내려온다(별도 조회 불필요).
+    lat: toCoord(row.lat),
+    lng: toCoord(row.lng),
     memo: row.admin_memo ?? '',
   };
 }
@@ -137,6 +146,10 @@ export function mapOrder(row: any): Order {
     // 픽업 마감 시각 — pickup_deadline_at 우선, 없으면 ordered_at + pickup_deadline_minutes 로 계산
     pickupTime: fmtPickupDeadline(row.pickup_deadline_at, row.ordered_at, row.pickup_deadline_minutes),
     orderedAt: fmtDateTime(row.ordered_at),
+    // 취소 요청(구매자 → 판매자). 컬럼 미적용 DB 에서는 undefined 로 떨어져 배지가 표시되지 않을 뿐이다.
+    cancelRequestStatus: row.cancel_request_status ?? undefined,
+    cancelRequestedAt: row.cancel_requested_at ? fmtDateTime(row.cancel_requested_at) : undefined,
+    cancelRequestReason: row.cancel_request_reason ?? undefined,
     memo: row.admin_memo ?? undefined,
   };
 }
@@ -333,6 +346,20 @@ export async function setStoreSuspension(storeId: string, suspended: boolean, re
 export async function setStoreMemo(storeId: string, memo: string): Promise<void> {
   const { error } = await supabase.rpc('admin_set_store_memo', { p_store_id: storeId, p_memo: memo });
   throwIf(error);
+}
+
+/**
+ * 매장 좌표 보정 — 판매자앱 지오코딩 미배포로 lat/lng 가 null 인 매장을 관리자가 채운다.
+ * stores 에는 관리자 UPDATE RLS 정책이 없어 직접 update 는 0 row 로 조용히 실패하므로 RPC 가 유일한 경로다.
+ * RPC 가 감사 로그(log_admin_action)를 남기므로 별도 insertActionLog 는 호출하지 않는다(기존 store RPC 3종과 동일 규약).
+ * ※ 서버가 대한민국 영역(lat 33~38.7 / lng 124.5~132)을 검증해 x/y 뒤바뀜을 막는다.
+ */
+export async function setStoreCoords(storeId: string, lat: number, lng: number): Promise<Seller> {
+  const { data, error } = await supabase.rpc('admin_set_store_coords', {
+    p_store_id: storeId, p_lat: lat, p_lng: lng,
+  });
+  throwIf(error);
+  return mapSeller(data);
 }
 
 // ============================================================================

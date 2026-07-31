@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Eye } from 'lucide-react';
+import { Search, Eye, AlertTriangle } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -8,7 +8,7 @@ import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
 import { fetchOrders, setOrderStatus, refundOrder } from '../lib/api';
-import type { Order, OrderStatus } from '../types';
+import type { Order, OrderStatus, CancelRequestStatus } from '../types';
 
 // 실제 DB order_seller_status enum('new'|'confirmed'|'completed'|'cancelled')과 동일한 4개 상태.
 // '노쇼', '분쟁중' 등은 별도 상태로 존재하지 않으며 memo로 기록한다.
@@ -20,9 +20,21 @@ import type { Order, OrderStatus } from '../types';
  *   RPC admin_refund_order → paymentStatus='환불완료', status='취소'. PG 취소 실패 시 DB 환불도 중단된다.
  * - safeNumber(050 안심번호)는 통신사 연동 결과이므로 관리자는 조회만 하고 발급/해제는 판매자 앱/PG 쪽 로직을 따른다.
  * - 관리자 메모는 표시 전용(저장 액션 없음).
+ * - 취소 요청(cancelRequestStatus)은 조회 전용이다. 구매자가 주문 후 10분 이내에 요청하면 'requested' 가 되고
+ *   승인/거절은 판매자앱에서만 처리한다(승인 시 판매자앱이 PG 전액취소 후 respond_order_cancel 호출).
+ *   관리자는 '취소요청 대기' 배지로 판매자 미응답 건을 파악하고, 필요하면 기존 환불 처리로 직접 개입한다.
  */
 const ORDER_STATUSES: OrderStatus[] = ['신규접수', '픽업대기', '픽업완료', '취소'];
 const PAGE_SIZE = 7;
+
+// 취소 요청 상태 한글 라벨 — 관리자 화면 표시 전용(DB 에는 영문 키만 저장된다).
+const CANCEL_REQUEST_KO: Record<CancelRequestStatus, string> = {
+  requested: '취소요청 대기',
+  approved: '취소 승인',
+  rejected: '취소 거절',
+};
+/** 판매자가 아직 응답하지 않은 취소 요청 — 관리자가 챙겨야 할 건. */
+const isCancelPending = (o: Order) => o.cancelRequestStatus === 'requested';
 
 export default function OrderManagement() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -55,6 +67,8 @@ export default function OrderManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // 필터와 무관하게 전체 기준으로 센다 — 필터를 걸어 놓고 미응답 건을 놓치는 일을 막는다.
+  const cancelPendingCount = orders.filter(isCancelPending).length;
 
   const handleExcelDownload = () => {
     const filters = [
@@ -82,6 +96,8 @@ export default function OrderManagement() {
           '안심번호': o.safeNumber,
           '픽업 마감': o.pickupTime,
           '주문일시': o.orderedAt,
+          '취소요청': o.cancelRequestStatus ? CANCEL_REQUEST_KO[o.cancelRequestStatus] : '',
+          '취소요청일시': o.cancelRequestedAt ?? '',
         })),
       }],
     });
@@ -131,6 +147,13 @@ export default function OrderManagement() {
           </select>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
+        {/* 판매자가 아직 승인/거절하지 않은 취소 요청이 쌓여 있으면 상단에 먼저 알린다. */}
+        {cancelPendingCount > 0 && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-xs text-alert-red">
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            판매자 응답을 기다리는 취소 요청이 {cancelPendingCount}건 있습니다. 목록의 '취소요청 대기' 배지를 확인하세요.
+          </div>
+        )}
       </div>
 
       <div className="flex gap-4">
@@ -163,7 +186,18 @@ export default function OrderManagement() {
                     <td className="px-4 py-3 text-gray-600">{order.sellerName}</td>
                     <td className="px-4 py-3 text-gray-600 max-w-32 truncate">{order.productName}</td>
                     <td className="px-4 py-3 font-medium">{order.totalPrice.toLocaleString()}원</td>
-                    <td className="px-4 py-3"><Badge type="order">{order.status}</Badge></td>
+                    <td className="px-4 py-3">
+                      <Badge type="order">{order.status}</Badge>
+                      {/* 판매자 미응답 취소 요청 — 관리자가 방치 건을 바로 찾을 수 있게 요청 시각까지 노출 */}
+                      {isCancelPending(order) && (
+                        <div className="mt-1">
+                          <Badge variant="red">취소요청 대기</Badge>
+                          {order.cancelRequestedAt && (
+                            <div className="mt-0.5 text-[11px] text-alert-red whitespace-nowrap">{order.cancelRequestedAt}</div>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><Badge type="payment">{order.paymentStatus}</Badge></td>
                     <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{order.pickupTime}</td>
                     <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{order.orderedAt}</td>
@@ -190,6 +224,29 @@ export default function OrderManagement() {
               <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-charcoal text-xl leading-none">×</button>
             </div>
             <div className="p-5 space-y-5">
+              {/* 취소 요청 — 승인/거절은 판매자앱 전용이므로 관리자에게는 조회 정보로만 보여준다. */}
+              {selected.cancelRequestStatus && (
+                <div className={`rounded-lg p-3 space-y-1 ${isCancelPending(selected) ? 'bg-red-50' : 'bg-soft-gray'}`}>
+                  <div className="flex items-center gap-1.5">
+                    {isCancelPending(selected) && <AlertTriangle size={14} className="text-alert-red flex-shrink-0" />}
+                    <Badge variant={isCancelPending(selected) ? 'red' : 'gray'}>
+                      {CANCEL_REQUEST_KO[selected.cancelRequestStatus]}
+                    </Badge>
+                  </div>
+                  {selected.cancelRequestedAt && (
+                    <p className="text-xs text-gray-600">요청 시각: {selected.cancelRequestedAt}</p>
+                  )}
+                  {selected.cancelRequestReason && (
+                    <p className="text-xs text-gray-600">요청 사유: {selected.cancelRequestReason}</p>
+                  )}
+                  {isCancelPending(selected) && (
+                    <p className="text-xs text-alert-red">
+                      판매자 응답 대기 중입니다. 승인·거절은 판매자앱에서 처리되며, 관리자가 직접 처리하려면 아래 [환불 처리]를 사용하세요.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => { setNewStatus(selected.status); setStatusChangeModal(true); }} className="btn-secondary flex-1 text-xs">상태 변경</button>

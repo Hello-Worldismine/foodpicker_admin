@@ -15,6 +15,10 @@ export type StorageType = '실온' | '냉장' | '냉동';
 export type OrderStatus = '신규접수' | '픽업대기' | '픽업완료' | '취소';
 // 결제 상태 — 실제 DB payment_status enum('pending'|'paid'|'cancelled'|'refunded')과 대응.
 export type PaymentStatus = '결제대기' | '결제완료' | '결제취소' | '환불완료';
+// 구매자 취소 요청 상태 — orders.cancel_request_status(null | 'requested' | 'approved' | 'rejected').
+// 구매자가 주문 후 10분 이내에 요청하면 'requested', 판매자가 응답하면 approved/rejected 로 확정된다.
+// 관리자는 'requested'(판매자 미응답) 건을 가시화하는 용도로만 읽는다(응답은 판매자앱 전용).
+export type CancelRequestStatus = 'requested' | 'approved' | 'rejected';
 
 // 정산 상태 — 실제 DB settlement_status enum('scheduled'|'completed'|'on_hold')과 대응.
 export type SettlementStatus = '정산예정' | '정산완료' | '보류';
@@ -48,6 +52,10 @@ export interface Seller {
   accountNumber: string;
   accountHolder: string;
   categoryMain: string;
+  // 매장 좌표(stores.lat/lng) — null 이면 사용자앱 지도에 핀이 뜨지 않는다.
+  // 판매자앱 지오코딩 미배포분을 관리자웹에서 백필하기 위해 노출한다.
+  lat?: number | null;
+  lng?: number | null;
   memo?: string;
 }
 
@@ -107,6 +115,10 @@ export interface Order {
   pickupDeadlineMinutes?: number; // 주문 시점에 스냅샷된 픽업 마감(분)
   pickupTime: string; // 픽업 마감 시각 표기('YYYY.MM.DD HH:mm 까지') — pickup_deadline_at 기반
   orderedAt: string;
+  // 취소 요청(구매자 → 판매자) — 관리자는 조회 전용. 'requested' 가 판매자 미응답 대기 건이다.
+  cancelRequestStatus?: CancelRequestStatus;
+  cancelRequestedAt?: string; // 요청 시각 표기('YYYY-MM-DD HH:mm')
+  cancelRequestReason?: string; // 구매자가 남긴 취소 사유
   memo?: string;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning } from 'lucide-react';
+import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning, MapPin } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -7,7 +7,8 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { fetchSellers, setStoreApproval, setStoreSuspension } from '../lib/api';
+import { fetchSellers, setStoreApproval, setStoreSuspension, setStoreCoords } from '../lib/api';
+import { geocode, isMapKeyConfigured, isMapFatalError } from '../lib/naverGeocode';
 import type { Seller, SellerStatus } from '../types';
 
 /**
@@ -15,6 +16,9 @@ import type { Seller, SellerStatus } from '../types';
  * - 목록: admin_stores 뷰(fetchSellers) — 검색/상태/지역 필터·페이지네이션은 클라이언트에서 처리.
  * - 승인/반려: admin_set_store_approval RPC(setStoreApproval), 이용정지/해제: admin_set_store_suspension RPC(setStoreSuspension).
  *   RPC가 감사 로그를 자동 기록하므로 별도 logAction 호출 불필요.
+ * - 좌표 보정: 네이버 지도 SDK geocoder(브라우저)로 주소 → 위경도를 얻어 admin_set_store_coords RPC(setStoreCoords)로 저장.
+ *   판매자앱 지오코딩이 배포되지 않아 lat/lng 가 null 인 매장은 사용자앱 지도에 핀이 뜨지 않는다 — 여기서 백필한다.
+ *   RPC 가 감사 로그를 기록하고, 서버 트리거가 해당 매장의 상품 픽업 좌표까지 자동 동기화한다.
  * ⚠️ 보안: residentNumberMasked(주민번호)는 마스킹된 값만 표시. bizCertImage 는 Storage URL(실서비스는 signed URL 권장).
  */
 const STATUS_OPTIONS: SellerStatus[] = ['승인대기', '승인완료', '반려', '이용정지'];
@@ -27,6 +31,18 @@ const REJECT_REASONS = [
 ];
 
 const PAGE_SIZE = 6;
+
+/** 좌표가 실제로 저장돼 있는가 — 둘 중 하나라도 null 이면 사용자앱 지도에서 제외된다. */
+const hasCoords = (s: Seller) => s.lat != null && s.lng != null;
+/** 목록/상세 표시용 좌표 문자열(소수점 6자리 ≈ 0.1m 해상도). */
+const fmtCoords = (s: Seller) => `${Number(s.lat).toFixed(6)}, ${Number(s.lng).toFixed(6)}`;
+
+/** 일괄 보정 실패 항목 — 어떤 매장이 왜 실패했는지 운영자가 바로 후속 조치할 수 있게 주소까지 남긴다. */
+interface CoordFail {
+  name: string;
+  address: string;
+  reason: string;
+}
 
 export default function SellerManagement() {
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -42,7 +58,22 @@ export default function SellerManagement() {
   const [rejectReason, setRejectReason] = useState('');
   const [customReason, setCustomReason] = useState('');
   const [suspendReason, setSuspendReason] = useState('');
+  // 좌표 보정 관련 — mapFatal 은 '키 미설정/인증 실패' 처럼 재시도해도 소용없는 원인을 화면에 노출하기 위한 것.
+  const [mapFatal, setMapFatal] = useState('');
+  const [geoBusyId, setGeoBusyId] = useState<string | null>(null);
+  const [coordModal, setCoordModal] = useState(false);
+  const [coordRunning, setCoordRunning] = useState(false);
+  const [coordProgress, setCoordProgress] = useState({ done: 0, total: 0, ok: 0 });
+  const [coordFails, setCoordFails] = useState<CoordFail[]>([]);
   const { download, isLoading, toast, canDownload } = useExcelDownload();
+
+  const mapKeyReady = isMapKeyConfigured();
+  // 좌표가 없고 주소는 있는 매장 = 일괄 보정 대상(주소가 비면 지오코딩 자체가 불가능하다).
+  const coordTargets = sellers.filter(s => !hasCoords(s) && s.address.trim() !== '');
+  // 버튼을 조용히 죽이지 않고 '왜 못 쓰는지'를 그대로 보여준다.
+  const mapBlockReason = !mapKeyReady
+    ? '지도 키 미설정 — .env 의 VITE_NAVER_MAP_CLIENT_ID 를 설정하세요.'
+    : mapFatal;
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +119,9 @@ export default function SellerManagement() {
           '연락처': s.phone,
           '이메일': s.email,
           '주소': s.address,
+          // 좌표 미등록 매장은 사용자앱 지도에서 빠지므로 다운로드본에서도 바로 식별할 수 있게 남긴다.
+          '위도': s.lat ?? '',
+          '경도': s.lng ?? '',
           '누적주문수': s.totalOrders,
           '신고수': s.reportCount,
           '주요카테고리': s.categoryMain,
@@ -131,6 +165,78 @@ export default function SellerManagement() {
     }
   };
 
+  // 좌표는 RPC 반환값 중 유일하게 신뢰할 수 있는 필드라 lat/lng 만 병합한다(뷰 전용 필드는 비어 있음).
+  const applyCoords = (id: string, lat: number, lng: number) => {
+    setSellers(prev => prev.map(s => s.id === id ? { ...s, lat, lng } : s));
+    setSelected(prev => prev && prev.id === id ? { ...prev, lat, lng } : prev);
+  };
+
+  /** 단건 보정 — 상세 패널의 [주소로 좌표 찾기]. */
+  const handleFindCoords = async (seller: Seller) => {
+    if (!seller.address.trim()) return alert('매장 주소가 없어 좌표를 찾을 수 없습니다.');
+    setGeoBusyId(seller.id);
+    try {
+      const coords = await geocode(seller.address);
+      if (!coords) {
+        alert(`주소로 좌표를 찾지 못했습니다.\n주소: ${seller.address}\n도로명 주소인지 확인해주세요.`);
+        return;
+      }
+      const updated = await setStoreCoords(seller.id, coords.lat, coords.lng);
+      applyCoords(seller.id, updated.lat ?? coords.lat, updated.lng ?? coords.lng);
+    } catch (e) {
+      const message = (e as Error).message ?? '알 수 없는 오류';
+      if (isMapFatalError(e)) setMapFatal(message);
+      alert('좌표 보정 실패: ' + message);
+    } finally {
+      setGeoBusyId(null);
+    }
+  };
+
+  /**
+   * 일괄 보정 — 좌표가 없고 주소가 있는 매장을 순차 처리한다.
+   * 개별 실패(주소 검색 실패·RPC 거부)는 목록에 모아두고 계속 진행하되,
+   * 지도 SDK 자체가 못 쓰는 오류(키 미설정·인증 실패)는 나머지도 전부 같은 이유로 실패하므로 즉시 중단한다.
+   */
+  const handleBulkCoords = async () => {
+    if (coordTargets.length === 0) {
+      return alert('좌표를 보정할 매장이 없습니다. (주소가 비어 있는 매장은 대상에서 제외됩니다)');
+    }
+    const targets = [...coordTargets];
+    setMapFatal('');
+    setCoordFails([]);
+    setCoordProgress({ done: 0, total: targets.length, ok: 0 });
+    setCoordRunning(true);
+    setCoordModal(true);
+
+    let done = 0;
+    let ok = 0;
+    const fails: CoordFail[] = [];
+    for (const seller of targets) {
+      try {
+        const coords = await geocode(seller.address);
+        if (!coords) {
+          fails.push({ name: seller.storeName, address: seller.address, reason: '주소 검색 결과 없음' });
+        } else {
+          await setStoreCoords(seller.id, coords.lat, coords.lng);
+          applyCoords(seller.id, coords.lat, coords.lng);
+          ok += 1;
+        }
+      } catch (e) {
+        const message = (e as Error).message ?? '알 수 없는 오류';
+        if (isMapFatalError(e)) {
+          setMapFatal(message);
+          break;
+        }
+        fails.push({ name: seller.storeName, address: seller.address, reason: message });
+      }
+      done += 1;
+      setCoordProgress({ done, total: targets.length, ok });
+      setCoordFails([...fails]);
+    }
+    setCoordFails([...fails]);
+    setCoordRunning(false);
+  };
+
   const handleSuspend = async () => {
     if (!selected || !suspendReason.trim()) return alert('이용정지 사유를 입력해주세요.');
     try {
@@ -159,8 +265,21 @@ export default function SellerManagement() {
           <select className="input w-40" value={regionFilter} onChange={e => { setRegionFilter(e.target.value); setPage(1); }}>
             {regionOptions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
+          <button
+            onClick={handleBulkCoords}
+            disabled={!!mapBlockReason || coordRunning || coordTargets.length === 0}
+            title={mapBlockReason || (coordTargets.length === 0 ? '좌표 미등록 매장이 없습니다.' : '')}
+            className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <MapPin size={14} />
+            매장 좌표 일괄 보정{coordTargets.length > 0 ? ` (${coordTargets.length})` : ''}
+          </button>
           <ExcelDownloadButton onClick={handleExcelDownload} isLoading={isLoading} hidden={!canDownload} />
         </div>
+        {/* 버튼을 조용히 비활성화만 하지 않고 원인을 그대로 노출한다. */}
+        {mapBlockReason && (
+          <p className="mt-2 text-xs text-alert-red">지도 기능 사용 불가: {mapBlockReason}</p>
+        )}
       </div>
 
       <div className="flex gap-4">
@@ -176,14 +295,14 @@ export default function SellerManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-soft-gray/50">
-                  {['매장명', '대표자', '사업자번호', '지역', '상태', '가입일', '주문수', '신고수', '관리'].map(h => (
+                  {['매장명', '대표자', '사업자번호', '지역', '상태', '좌표', '가입일', '주문수', '신고수', '관리'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
-                  <tr><td colSpan={9}><EmptyState /></td></tr>
+                  <tr><td colSpan={10}><EmptyState /></td></tr>
                 ) : paginated.map(seller => (
                   <tr
                     key={seller.id}
@@ -195,6 +314,12 @@ export default function SellerManagement() {
                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{seller.bizNumber}</td>
                     <td className="px-4 py-3 text-gray-600">{seller.region}</td>
                     <td className="px-4 py-3"><Badge type="seller">{seller.status}</Badge></td>
+                    {/* 좌표 미등록 = 사용자앱 지도에 핀이 뜨지 않는 매장 */}
+                    <td className="px-4 py-3">
+                      {hasCoords(seller)
+                        ? <Badge variant="green">있음</Badge>
+                        : <Badge variant="red">없음</Badge>}
+                    </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{seller.joinDate}</td>
                     <td className="px-4 py-3 text-gray-600">{seller.totalOrders.toLocaleString()}</td>
                     <td className="px-4 py-3">
@@ -294,7 +419,27 @@ export default function SellerManagement() {
 
               <section>
                 <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">매장 주소</p>
-                <p className="text-sm text-charcoal">{selected.address}</p>
+                <p className="text-sm text-charcoal">{selected.address || '-'}</p>
+                {/* 좌표는 사용자앱 지도 노출의 전제조건이다 — 없으면 원인과 조치 버튼을 함께 보여준다. */}
+                <div className="mt-2">
+                  {hasCoords(selected) ? (
+                    <p className="text-xs text-gray-500 font-mono">좌표 {fmtCoords(selected)}</p>
+                  ) : (
+                    <p className="text-xs text-alert-red">좌표 미등록 — 사용자 지도에 표시되지 않습니다</p>
+                  )}
+                  <button
+                    onClick={() => handleFindCoords(selected)}
+                    disabled={!!mapBlockReason || geoBusyId === selected.id || !selected.address.trim()}
+                    title={mapBlockReason || (!selected.address.trim() ? '매장 주소가 없습니다.' : '')}
+                    className="btn-secondary mt-2 w-full flex items-center justify-center gap-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <MapPin size={13} />
+                    {geoBusyId === selected.id
+                      ? '좌표 찾는 중...'
+                      : hasCoords(selected) ? '주소로 좌표 다시 찾기' : '주소로 좌표 찾기'}
+                  </button>
+                  {mapBlockReason && <p className="mt-1 text-xs text-alert-red">{mapBlockReason}</p>}
+                </div>
               </section>
 
               <section>
@@ -344,6 +489,68 @@ export default function SellerManagement() {
             <button onClick={() => setSuspendModal(false)} className="btn-secondary flex-1">취소</button>
             <button onClick={handleSuspend} className="btn-warning flex-1">이용정지</button>
           </div>
+        </div>
+      </Modal>
+
+      {/* 좌표 일괄 보정 진행 모달 — 진행 중에는 닫아도 작업은 계속 진행된다(상태만 백그라운드로 갱신). */}
+      <Modal
+        open={coordModal}
+        onClose={() => { if (!coordRunning) setCoordModal(false); }}
+        title="매장 좌표 일괄 보정"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div>
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-gray-500">{coordRunning ? '보정 중...' : '완료'}</span>
+              <span className="font-medium text-charcoal">
+                {coordProgress.done} / {coordProgress.total}
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${coordProgress.total ? (coordProgress.done / coordProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              성공 {coordProgress.ok}건 / 실패 {coordFails.length}건
+            </p>
+          </div>
+
+          {mapFatal && (
+            <div className="bg-red-50 rounded-lg p-3">
+              <p className="text-xs text-alert-red">
+                지도 SDK 오류로 중단되었습니다: {mapFatal}
+              </p>
+            </div>
+          )}
+
+          {coordFails.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">실패 목록</p>
+              <div className="max-h-56 overflow-y-auto space-y-2">
+                {coordFails.map((f, i) => (
+                  <div key={`${f.name}-${i}`} className="bg-soft-gray rounded-lg p-3">
+                    <p className="text-sm font-medium text-charcoal">{f.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{f.address || '(주소 없음)'}</p>
+                    <p className="text-xs text-alert-red mt-0.5">{f.reason}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                실패 건은 매장 주소를 도로명 주소로 수정한 뒤 상세 패널의 [주소로 좌표 찾기]로 개별 처리하세요.
+              </p>
+            </div>
+          )}
+
+          <button
+            onClick={() => setCoordModal(false)}
+            disabled={coordRunning}
+            className="btn-secondary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {coordRunning ? '진행 중...' : '닫기'}
+          </button>
         </div>
       </Modal>
 
