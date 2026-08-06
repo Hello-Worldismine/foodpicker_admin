@@ -71,8 +71,12 @@ export default function SellerManagement() {
   // 좌표가 없고 주소는 있는 매장 = 일괄 보정 대상(주소가 비면 지오코딩 자체가 불가능하다).
   const coordTargets = sellers.filter(s => !hasCoords(s) && s.address.trim() !== '');
   // 버튼을 조용히 죽이지 않고 '왜 못 쓰는지'를 그대로 보여준다.
+  // naverGeocode 가 공개 키 기본값을 갖고 있어 실무상 mapKeyReady 는 항상 true 다.
+  // (기본값을 빈 문자열로 바꿀 경우를 대비해 분기 자체는 남겨둔다.)
+  // 실제로 남는 실패 사유는 AUTH_FAILED — NCP 콘솔에 이 화면의 접속 오리진이
+  // 등록되지 않은 경우이며, 그 문구가 오리진까지 그대로 알려준다.
   const mapBlockReason = !mapKeyReady
-    ? '지도 키 미설정 — .env 의 VITE_NAVER_MAP_CLIENT_ID 를 설정하세요.'
+    ? '지도 키가 비어 있습니다. .env 의 VITE_NAVER_MAP_CLIENT_ID 를 설정하세요.'
     : mapFatal;
 
   useEffect(() => {

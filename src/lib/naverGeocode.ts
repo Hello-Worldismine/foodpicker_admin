@@ -22,7 +22,16 @@ declare global {
   }
 }
 
-const CLIENT_ID = (import.meta.env.VITE_NAVER_MAP_CLIENT_ID ?? '').trim();
+// 네이버 지도 클라이언트 키(ncpKeyId)는 **공개 값**이다. 앱 번들·웹 페이지에 그대로 박히고,
+// 보안은 키 비밀유지가 아니라 NCP 콘솔의 'Web 서비스 URL' 도메인 제한으로 이뤄진다.
+// 그래서 기본값을 코드에 두는 것이 안전하며, 사용자앱도 같은 방식으로 폴백을 두고 있다.
+//
+// 폴백을 두는 이유: .env 는 .gitignore 대상이라 저장소를 clone 한 사람에게 전달되지 않는다.
+// 폴백이 없으면 새로 받은 개발자마다 판매자관리 화면에서
+// '지도 기능 사용 불가: 지도 키 미설정' 붉은 배너를 보게 된다(수정사항 시트 관리자페이지 8행).
+// .env 에 값이 있으면 그쪽이 우선하므로 키를 교체할 때는 .env 만 바꾸면 된다.
+const DEFAULT_CLIENT_ID = '1wza2xsjez';
+const CLIENT_ID = (import.meta.env.VITE_NAVER_MAP_CLIENT_ID ?? '').trim() || DEFAULT_CLIENT_ID;
 const SCRIPT_ID = 'fp-naver-maps-sdk';
 /** SDK 로드 타임아웃 — 스크립트가 내려오지 않거나 인증 응답이 오지 않는 상황을 잘라낸다. */
 const LOAD_TIMEOUT_MS = 8000;
