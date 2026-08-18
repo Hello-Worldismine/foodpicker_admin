@@ -44,6 +44,11 @@ npm run build          # 타입체크 + 프로덕션 빌드
 6. `FoodPicker_seller_app/supabase/migrations/20260722010000_category_icons_coupon_offer.sql`
    (카테고리 아이콘 이미지 컬럼 + `category-icons` 버킷, 쿠폰 **매장 지정 발급** 플로우 — 판매자 알림 트리거 + `respond_coupon_offer` RPC.
    실행 전까지 카테고리 아이콘 업로드·매장 지정 쿠폰 발급은 저장 시 오류가 납니다.)
+7. `FoodPicker_seller_app/supabase/migrations/20260818000000_settlement_completion.sql`
+   (**정산 관리 백엔드 보완** — 정산예정일 지정·판매자 정산 알림·메모 전용 RPC·기간 지정 정산 생성·
+   정산 주기 설정 반영·매장별 수수료율 변경 RPC. 자세한 내용은 [정산 관리 섹션](#정산-관리) 참고.
+   실행 전까지 정산예정일 지정/정산 생성/수수료율 변경은 오류가 나고, 정산 확정·보류는
+   구 시그니처로 자동 폴백되어 동작하되 판매자 알림이 발송되지 않습니다.)
 
 ### 관리자 계정 흐름
 
@@ -61,6 +66,30 @@ npm run build          # 타입체크 + 프로덕션 빌드
 - **소비자 앱 연동(별도 작업)**: `FoodPicker_customer_app/src/screens/FAQScreen.js`가 아직 FAQ 를 하드코딩(`FAQS` 상수)해서 보여주고 있어, 관리자 웹에서 등록/수정해도 앱 화면엔 반영되지 않습니다. 연동하려면 그 화면을 `faqs` 테이블(`is_active=true`, `category`/`display_order` 순 정렬) 조회로 바꿔야 합니다(공개 읽기 RLS 준비됨).
 
 관련 코드: `src/pages/FaqManagement.tsx`(화면), `src/lib/api.ts`의 `fetchFaqs`/`createFaq`/`updateFaq`/`toggleFaqActive`/`deleteFaq`(데이터 계층), `src/types/index.ts`의 `Faq`/`FaqCategory`(타입).
+
+## 정산 관리
+
+`/settlements` 메뉴는 `settlements`(주문 단위 행)를 **판매자 × 정산기간** 그룹으로 집계해 보여주고,
+그룹 단위로 확정/보류/해제를 처리합니다. 백엔드는 `20260818000000_settlement_completion.sql`(백엔드 준비 7번)이 담당합니다.
+
+| 기능 | 경로 |
+|---|---|
+| 목록·상세(주문별 내역 포함) | `admin_settlements` 뷰 → `api.fetchSettlements()` 가 그룹 집계 + `orders[]` 로 원본 행 보존 |
+| 확정 / 보류 / 보류해제 (단건·일괄) | `admin_set_settlement_status(ids[], status, memo, settled_on)` — 감사 로그 + **판매자 알림**(`notifications.type='settlement'`) |
+| 관리자 메모 편집 | `admin_set_settlement_memo(ids[], memo)` — 상태 변경/알림 없이 메모만 갱신 |
+| 정산 생성(기간 지정) | `admin_generate_settlements(start, end, pay?)` — 이미 정산된 주문은 제외(멱등) |
+| 정기 배치 | `generate_weekly_settlements()` + cron `foodpicker-weekly-settlements`(매주 수 00:00 UTC). 실제 마감 기간은 `platform_settings.settlement_cycle`(주간/격주/월간)이 결정 |
+| 매장별 수수료율 변경 | `admin_set_store_commission(store_id, rate)` — 판매자 관리 상세 패널의 [수수료율 → 변경] |
+
+- **정산 조정액**: 상세의 금액식은 `총 판매금액 − 플랫폼수수료 − PG수수료 − 환불금액 + 조정액 = 최종 정산금액` 입니다.
+  조정액은 **본사 쿠폰 보전분**(`cost_bearer='platform'/'shared'` 쿠폰의 플랫폼 부담분)과 환불 회계(`admin_refund_order` 는
+  순매출을 차감) 잔차를 합친 파생값이라, 어떤 데이터에서도 합계가 맞아떨어집니다.
+  `쿠폰 판매자 부담액`(`settlements.coupon_burden`)은 정산금액에서 이미 빠진 몫이라 참고 표시입니다.
+- **정산예정일(실지급일)** 은 확정 모달에서 지정합니다. 지정한 날짜가 판매자 알림 문구에 함께 나갑니다.
+- **관리자 메모는 판매자에게 보입니다** (`settlements.admin_memo` 는 보류 사유 통지 겸용 — 판매자 앱 정산 화면 노출).
+- **수수료율 변경은 소급되지 않습니다.** 주문 생성 시점의 `stores.commission_rate` 로 `orders.fee` 가 확정되고,
+  정산은 그 값을 그대로 집계합니다. 설정 화면의 '수수료율' 은 `platform_settings.default_commission_rate` 로,
+  20260818 이후 **신규 매장의 기본 수수료율**(`stores.commission_rate` DEFAULT)로 실제 적용됩니다.
 
 ## 쿠폰 매장 지정 발급 (2026-07-22)
 

@@ -25,6 +25,12 @@ function throwIf(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
 }
 
+/** PostgREST 가 해당 인자 조합의 함수를 찾지 못했을 때(마이그레이션 미적용) 인가 */
+function isMissingRpcSignature(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === 'PGRST202' || /Could not find the function/i.test(error.message ?? '');
+}
+
 // ============================================================================
 // 매퍼
 // ============================================================================
@@ -476,6 +482,8 @@ export async function fetchSettlements(): Promise<Settlement[]> {
     groups.get(key)!.push(row);
   }
 
+  const num = (v: any) => Number(v) || 0;
+
   const result: Settlement[] = [];
   for (const [key, rows] of groups) {
     const first = rows[0];
@@ -483,36 +491,107 @@ export async function fetchSettlements(): Promise<Settlement[]> {
     const statuses = new Set(rows.map(r => r.status));
     const status = statuses.has('on_hold') ? 'on_hold'
       : (statuses.size === 1 && statuses.has('completed')) ? 'completed' : 'scheduled';
+
+    const totalSales = sum(r => num(r.amount));
+    const platformFee = sum(r => num(r.platform_fee));
+    const pgFee = sum(r => num(r.pg_fee));
+    const refundAmount = sum(r => num(r.refund));
+    const finalAmount = sum(r => num(r.settlement_amount));
+
     result.push({
       id: key,
       settlementIds: rows.map(r => r.id),
       sellerName: first.store_name ?? '',
       sellerId: first.seller_id,
+      storeId: first.store_id,
       bizNumber: first.biz_number ?? '',
       period: first.period_start && first.period_end ? `${first.period_start} ~ ${first.period_end}` : '-',
-      totalSales: sum(r => r.amount),
-      platformFee: sum(r => r.platform_fee),
-      pgFee: sum(r => r.pg_fee),
-      commission: sum(r => r.fee),
-      refundAmount: sum(r => r.refund),
-      finalAmount: sum(r => r.settlement_amount),
+      orderCount: rows.length,
+      totalSales,
+      platformFee,
+      pgFee,
+      commission: sum(r => num(r.fee)),
+      refundAmount,
+      couponBurden: sum(r => num(r.coupon_burden)),
+      // 본사 쿠폰 보전분·환불 회계(admin_refund_order 는 순매출을 차감)까지 반영한 잔차.
+      // 상세 화면의 금액식(판매 - 수수료 - 환불 + 조정 = 최종)이 항상 맞아떨어지게 하는 용도.
+      adjustment: finalAmount - (totalSales - platformFee - pgFee - refundAmount),
+      finalAmount,
       status: SETTLEMENT_STATUS_KO[status] ?? '정산예정',
       scheduledDate: first.settled_on ?? '',
       bankName: first.bank_name ?? '',
       accountNumber: first.account_number ?? '',
       accountHolder: first.account_holder ?? '',
       memo: rows.find(r => r.admin_memo)?.admin_memo ?? '',
+      orders: rows.map(r => {
+        const amount = num(r.amount), pf = num(r.platform_fee), pg = num(r.pg_fee);
+        const refund = num(r.refund), fin = num(r.settlement_amount);
+        return {
+          id: r.id,
+          settlementCode: r.settlement_code ?? '',
+          orderCode: r.order_code ?? '',
+          productName: r.product_name ?? '',
+          amount, platformFee: pf, pgFee: pg, refund,
+          couponBurden: num(r.coupon_burden),
+          adjustment: fin - (amount - pf - pg - refund),
+          finalAmount: fin,
+          status: SETTLEMENT_STATUS_KO[r.status] ?? '정산예정',
+          settledOn: r.settled_on ?? '',
+        };
+      }).sort((a, b) => a.settlementCode.localeCompare(b.settlementCode)),
     });
   }
   return result;
 }
 
-export async function setSettlementStatus(settlementIds: string[], statusKo: Settlement['status'], memo?: string): Promise<number> {
-  const { data, error } = await supabase.rpc('admin_set_settlement_status', {
+/**
+ * 정산 상태 일괄 변경.
+ * settledOn(정산예정일)은 20260818 마이그레이션에서 추가된 4번째 인자다. 마이그레이션 미적용 DB에서는
+ * PostgREST 가 함수 시그니처를 못 찾아(PGRST202) 실패하므로, 그 경우에만 3인자 시그니처로 한 번 더 시도한다.
+ */
+export async function setSettlementStatus(
+  settlementIds: string[], statusKo: Settlement['status'], memo?: string, settledOn?: string,
+): Promise<number> {
+  const base = {
     p_ids: settlementIds, p_status: SETTLEMENT_STATUS_EN[statusKo], p_memo: memo ?? null,
+  };
+  const { data, error } = await supabase.rpc('admin_set_settlement_status', {
+    ...base, p_settled_on: settledOn || null,
+  });
+  if (error && isMissingRpcSignature(error)) {
+    const retry = await supabase.rpc('admin_set_settlement_status', base);
+    throwIf(retry.error);
+    return retry.data ?? 0;
+  }
+  throwIf(error);
+  return data ?? 0;
+}
+
+/** 정산 관리자 메모만 갱신 — 상태 변경/판매자 알림 없이 memo 만 기록한다. */
+export async function setSettlementMemo(settlementIds: string[], memo: string): Promise<number> {
+  const { data, error } = await supabase.rpc('admin_set_settlement_memo', {
+    p_ids: settlementIds, p_memo: memo,
   });
   throwIf(error);
   return data ?? 0;
+}
+
+/** 기간을 지정해 정산 행을 생성(마감). 이미 정산된 주문은 건너뛰므로 재실행해도 안전하다. */
+export async function generateSettlements(start: string, end: string, payDate?: string): Promise<number> {
+  const { data, error } = await supabase.rpc('admin_generate_settlements', {
+    p_start: start, p_end: end, p_pay: payDate || null,
+  });
+  throwIf(error);
+  return data ?? 0;
+}
+
+/** 매장별 수수료율(%) 변경 — 변경 시점 이후 생성되는 주문부터 적용된다. */
+export async function setStoreCommission(storeId: string, rate: number): Promise<number> {
+  const { data, error } = await supabase.rpc('admin_set_store_commission', {
+    p_store_id: storeId, p_rate: rate,
+  });
+  throwIf(error);
+  return data ?? rate;
 }
 
 // ============================================================================

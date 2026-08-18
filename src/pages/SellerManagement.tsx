@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning, MapPin } from 'lucide-react';
+import { Search, Eye, CheckCircle, XCircle, Ban, Download, FileWarning, MapPin, Percent } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -7,7 +7,7 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { fetchSellers, setStoreApproval, setStoreSuspension, setStoreCoords } from '../lib/api';
+import { fetchSellers, setStoreApproval, setStoreSuspension, setStoreCoords, setStoreCommission } from '../lib/api';
 import { geocode, isMapKeyConfigured, isMapFatalError } from '../lib/naverGeocode';
 import type { Seller, SellerStatus } from '../types';
 
@@ -65,6 +65,11 @@ export default function SellerManagement() {
   const [coordRunning, setCoordRunning] = useState(false);
   const [coordProgress, setCoordProgress] = useState({ done: 0, total: 0, ok: 0 });
   const [coordFails, setCoordFails] = useState<CoordFail[]>([]);
+  // 수수료율 변경 — 정산 금액 산정의 기준값이라 관리자만(admin_set_store_commission RPC) 바꿀 수 있다.
+  const [rateModal, setRateModal] = useState<Seller | null>(null);
+  const [rateInput, setRateInput] = useState('');
+  const [rateBusy, setRateBusy] = useState(false);
+  const [rateNotice, setRateNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const { download, isLoading, toast, canDownload } = useExcelDownload();
 
   const mapKeyReady = isMapKeyConfigured();
@@ -98,6 +103,32 @@ export default function SellerManagement() {
   });
 
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const showRateNotice = (message: string, type: 'success' | 'error') => {
+    setRateNotice({ message, type });
+    setTimeout(() => setRateNotice(null), 3500);
+  };
+
+  /** 매장 수수료율 변경 — 변경 시점 이후 생성되는 주문부터 반영된다(기존 주문/정산은 불변). */
+  const handleSaveRate = async () => {
+    if (!rateModal) return;
+    const rate = Number(rateInput);
+    if (!Number.isInteger(rate) || rate < 0 || rate > 100) {
+      return showRateNotice('수수료율은 0~100 사이의 정수여야 합니다.', 'error');
+    }
+    setRateBusy(true);
+    try {
+      await setStoreCommission(rateModal.id, rate);
+      setSellers(prev => prev.map(x => x.id === rateModal.id ? { ...x, commissionRate: rate } : x));
+      setSelected(prev => prev && prev.id === rateModal.id ? { ...prev, commissionRate: rate } : prev);
+      setRateModal(null);
+      showRateNotice(`${rateModal.storeName}의 수수료율을 ${rate}% 로 변경했습니다. (판매자 알림 발송)`, 'success');
+    } catch (e) {
+      showRateNotice('변경 실패: ' + (e as Error).message, 'error');
+    } finally {
+      setRateBusy(false);
+    }
+  };
 
   const handleExcelDownload = () => {
     const filters = [
@@ -389,7 +420,17 @@ export default function SellerManagement() {
                     ['이메일', selected.email],
                     ['지역', selected.region],
                     ['가입일', selected.joinDate],
-                    ['수수료율', `${selected.commissionRate}%`],
+                    ['수수료율', (
+                      <span className="inline-flex items-center gap-2">
+                        {selected.commissionRate}%
+                        <button
+                          onClick={() => { setRateInput(String(selected.commissionRate)); setRateModal(selected); }}
+                          className="inline-flex items-center gap-0.5 text-xs text-primary hover:underline"
+                        >
+                          <Percent size={11} /> 변경
+                        </button>
+                      </span>
+                    )],
                     ['누적 주문', `${selected.totalOrders}건`],
                     ['신고 수', `${selected.reportCount}건`],
                   ].map(([label, value]) => (
@@ -558,7 +599,36 @@ export default function SellerManagement() {
         </div>
       </Modal>
 
-      {toast && <Toast message={toast.message} type={toast.type} />}
+      {/* 수수료율 변경 모달 */}
+      <Modal open={!!rateModal} onClose={() => setRateModal(null)} title="수수료율 변경">
+        <div className="space-y-4">
+          <div className="bg-soft-gray rounded-lg p-3 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500">매장</span><span>{rateModal?.storeName}</span></div>
+            <div className="flex justify-between mt-1"><span className="text-gray-500">현재 수수료율</span><span>{rateModal?.commissionRate}%</span></div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-charcoal block mb-1">새 수수료율 (%)</label>
+            <input
+              type="number" min={0} max={100} step={1}
+              className="input w-32"
+              value={rateInput}
+              onChange={e => setRateInput(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-gray-500 bg-yellow-50 rounded-lg p-3 leading-relaxed">
+            변경 시점 <b>이후에 생성되는 주문</b>부터 적용됩니다. 이미 접수된 주문과 생성된 정산 내역의 수수료는 바뀌지 않습니다.<br />
+            변경 사실이 판매자에게 알림으로 통지되고 감사 로그에 기록됩니다.
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => setRateModal(null)} className="btn-secondary flex-1">취소</button>
+            <button disabled={rateBusy} onClick={handleSaveRate} className="btn-primary flex-1">변경</button>
+          </div>
+        </div>
+      </Modal>
+
+      {rateNotice
+        ? <Toast message={rateNotice.message} type={rateNotice.type} onClose={() => setRateNotice(null)} />
+        : toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 }

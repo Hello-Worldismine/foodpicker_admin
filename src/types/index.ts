@@ -122,18 +122,39 @@ export interface Order {
   memo?: string;
 }
 
+/** 정산 그룹에 묶인 주문 단위 원본 행(settlements 1행 = 주문 1건) */
+export interface SettlementOrderRow {
+  id: string; // settlements.id
+  settlementCode: string; // ST-001
+  orderCode: string;
+  productName: string;
+  amount: number;
+  platformFee: number;
+  pgFee: number;
+  refund: number;
+  couponBurden: number; // 쿠폰 할인 중 판매자 부담액(표시용 — 정산금액에서 이미 제외된 몫)
+  adjustment: number; // 정산 조정액 = finalAmount - (amount - platformFee - pgFee - refund). 본사 쿠폰 보전/환불 회계 잔차
+  finalAmount: number;
+  status: SettlementStatus;
+  settledOn: string;
+}
+
 export interface Settlement {
   id: string; // 판매자×기간 그룹 키(클라이언트 파생 — DB settlements 는 주문 단위 행)
   settlementIds: string[]; // 그룹에 포함된 settlements.id 목록(일괄 상태 변경용)
   sellerName: string;
   sellerId: string;
+  storeId: string;
   bizNumber: string;
   period: string;
+  orderCount: number; // 그룹에 묶인 주문 건수
   totalSales: number;
   platformFee: number; // 플랫폼 수수료
   pgFee: number; // PG(결제대행) 수수료
   commission: number; // platformFee + pgFee 합계
   refundAmount: number;
+  couponBurden: number; // 판매자 부담 쿠폰 할인액(정산금액에서 이미 빠진 몫 — 표시용)
+  adjustment: number; // 정산 조정액(본사 쿠폰 보전분 + 환불 회계 잔차). 상세 금액식이 항상 맞아떨어지게 한다
   finalAmount: number;
   status: SettlementStatus;
   scheduledDate: string;
@@ -141,6 +162,7 @@ export interface Settlement {
   accountNumber: string;
   accountHolder: string;
   memo?: string;
+  orders: SettlementOrderRow[]; // 정산 상세 — 주문 단위 내역
 }
 
 // 상한 음식/소비기한 만료 등 증빙이 필요한 신고 건에 첨부되는 사진·영상 (실 DB엔 아직 컬럼 없음 — 신규 필요)
