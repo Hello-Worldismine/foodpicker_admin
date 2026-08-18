@@ -544,14 +544,22 @@ export async function fetchSettlements(): Promise<Settlement[]> {
   return result;
 }
 
+/** 정산 상태 변경 결과. degraded=true 면 20260818 마이그레이션 미적용이라 구 시그니처로 처리된 것. */
+export interface SettlementStatusResult {
+  count: number;
+  /** 구 3인자 RPC 로 폴백됨 — 정산예정일 지정과 판매자 알림이 적용되지 않았다. */
+  degraded: boolean;
+}
+
 /**
  * 정산 상태 일괄 변경.
  * settledOn(정산예정일)은 20260818 마이그레이션에서 추가된 4번째 인자다. 마이그레이션 미적용 DB에서는
  * PostgREST 가 함수 시그니처를 못 찾아(PGRST202) 실패하므로, 그 경우에만 3인자 시그니처로 한 번 더 시도한다.
+ * 폴백되면 정산예정일 지정·판매자 알림이 빠지므로 degraded=true 로 알려 화면이 경고를 띄우게 한다.
  */
 export async function setSettlementStatus(
   settlementIds: string[], statusKo: Settlement['status'], memo?: string, settledOn?: string,
-): Promise<number> {
+): Promise<SettlementStatusResult> {
   const base = {
     p_ids: settlementIds, p_status: SETTLEMENT_STATUS_EN[statusKo], p_memo: memo ?? null,
   };
@@ -561,10 +569,10 @@ export async function setSettlementStatus(
   if (error && isMissingRpcSignature(error)) {
     const retry = await supabase.rpc('admin_set_settlement_status', base);
     throwIf(retry.error);
-    return retry.data ?? 0;
+    return { count: retry.data ?? 0, degraded: true };
   }
   throwIf(error);
-  return data ?? 0;
+  return { count: data ?? 0, degraded: false };
 }
 
 /** 정산 관리자 메모만 갱신 — 상태 변경/판매자 알림 없이 memo 만 기록한다. */

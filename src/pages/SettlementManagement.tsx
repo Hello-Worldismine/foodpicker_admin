@@ -37,6 +37,8 @@ function lastWeekRange(): { start: string; end: string } {
 }
 
 const won = (n: number) => `${n.toLocaleString()}원`;
+/** 차감 항목 표기 — 0 원일 때 '-0원' 이 되지 않게 한다. */
+const minus = (n: number) => (n === 0 ? won(0) : `-${won(n)}`);
 
 const HOLD_REASONS = [
   '환불 분쟁 확인 필요',
@@ -167,13 +169,22 @@ export default function SettlementManagement() {
     }
     setBusy(true);
     try {
-      const count = await setSettlementStatus(ids, status, memo, settledOn);
+      const { count, degraded } = await setSettlementStatus(ids, status, memo, settledOn);
       await load();
       setChecked(new Set());
-      showNotice(
-        `${targets.length}개 정산 그룹(${count || ids.length}건)을 "${status}" 처리했습니다. 판매자 알림·감사 로그가 기록되었습니다.`,
-        'success',
-      );
+      if (degraded) {
+        // 20260818 마이그레이션 미적용 — 상태는 바뀌었지만 정산예정일 지정·판매자 알림은 빠졌다.
+        showNotice(
+          `${targets.length}개 그룹(${count || ids.length}건) 상태는 "${status}"로 변경됐지만, DB 마이그레이션(20260818)이 아직 적용되지 않아 ` +
+          '지정한 정산예정일과 판매자 알림은 반영되지 않았습니다.',
+          'error',
+        );
+      } else {
+        showNotice(
+          `${targets.length}개 정산 그룹(${count || ids.length}건)을 "${status}" 처리했습니다. 판매자 알림·감사 로그가 기록되었습니다.`,
+          'success',
+        );
+      }
       return true;
     } catch (e) {
       showNotice('처리 실패: ' + (e as Error).message, 'error');
@@ -526,9 +537,9 @@ export default function SettlementManagement() {
                   <div className="flex justify-between"><span className="text-gray-500">상태</span><Badge type="settlement">{selected.status}</Badge></div>
                   <div className="flex justify-between"><span className="text-gray-500">주문 건수</span><span>{selected.orderCount}건</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">총 판매금액</span><span>{won(selected.totalSales)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">플랫폼 수수료</span><span className="text-warm-orange">-{won(selected.platformFee)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">PG 수수료</span><span className="text-warm-orange">-{won(selected.pgFee)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">환불금액</span><span className="text-alert-red">-{won(selected.refundAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">플랫폼 수수료</span><span className="text-warm-orange">{minus(selected.platformFee)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">PG 수수료</span><span className="text-warm-orange">{minus(selected.pgFee)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">환불금액</span><span className="text-alert-red">{minus(selected.refundAmount)}</span></div>
                   {selected.adjustment !== 0 && (
                     <div className="flex justify-between">
                       <span className="text-gray-500" title="본사 쿠폰 보전분 + 환불 회계 조정">정산 조정액</span>
@@ -572,8 +583,8 @@ export default function SettlementManagement() {
                             <span className="font-mono">{o.orderCode}</span>
                           </div>
                           <div className="flex justify-between"><span className="text-gray-500">판매금액</span><span>{won(o.amount)}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">수수료(플랫폼/PG)</span><span className="text-warm-orange">-{won(o.platformFee + o.pgFee)}</span></div>
-                          {o.refund > 0 && <div className="flex justify-between"><span className="text-gray-500">환불</span><span className="text-alert-red">-{won(o.refund)}</span></div>}
+                          <div className="flex justify-between"><span className="text-gray-500">수수료(플랫폼/PG)</span><span className="text-warm-orange">{minus(o.platformFee + o.pgFee)}</span></div>
+                          {o.refund > 0 && <div className="flex justify-between"><span className="text-gray-500">환불</span><span className="text-alert-red">{minus(o.refund)}</span></div>}
                           {o.couponBurden > 0 && <div className="flex justify-between"><span className="text-gray-500">쿠폰 판매자부담</span><span className="text-gray-500">{won(o.couponBurden)}</span></div>}
                           {o.adjustment !== 0 && (
                             <div className="flex justify-between"><span className="text-gray-500">조정액</span>
