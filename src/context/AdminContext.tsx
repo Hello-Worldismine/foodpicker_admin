@@ -18,7 +18,8 @@ export interface DownloadLog {
 interface AdminContextType {
   currentAdmin: AdminAccount;
   downloadLogs: DownloadLog[];
-  addDownloadLog: (log: Omit<DownloadLog, 'id'>) => void;
+  /** 다운로드 감사 로그 기록. 서버 기록 실패 시 false 를 반환한다(호출부가 사용자에게 알릴 수 있게). */
+  addDownloadLog: (log: Omit<DownloadLog, 'id'>) => Promise<boolean>;
   canDownload: boolean;
   signOut: () => Promise<void>;
   /** 직접 테이블 UPDATE 로 처리한 관리자 액션의 감사 로그 기록(RPC 액션은 서버가 자동 기록) */
@@ -83,9 +84,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
   }, []);
 
-  const addDownloadLog = useCallback((log: Omit<DownloadLog, 'id'>) => {
-    setDownloadLogs(prev => [{ id: `dl_${Date.now()}`, ...log }, ...prev]);
-    insertDownloadLog(log.adminId, log.adminName, log.menu, log.filters, log.count).catch(() => {});
+  // 감사 로그는 '남았다고 표시했는데 실제로는 안 남는' 상태가 가장 위험하다.
+  // 예전엔 INSERT 실패를 통째로 삼켜(.catch(() => {})) 화면에만 성공 기록이 쌓였다.
+  const addDownloadLog = useCallback(async (log: Omit<DownloadLog, 'id'>): Promise<boolean> => {
+    try {
+      await insertDownloadLog(log.adminId, log.adminName, log.menu, log.filters, log.count);
+      setDownloadLogs(prev => [{ id: `dl_${Date.now()}`, ...log }, ...prev]);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   const logAction = useCallback((action: string, targetType: string, targetId: string, detail: string) => {

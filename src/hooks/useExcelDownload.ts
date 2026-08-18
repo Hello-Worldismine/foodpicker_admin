@@ -65,7 +65,7 @@ export function useExcelDownload() {
       const filename = `foodpicker_${options.filename}_${TODAY()}.xlsx`;
       XLSX.writeFile(wb, filename);
 
-      addDownloadLog({
+      const logged = await addDownloadLog({
         adminId: currentAdmin.id,
         adminName: currentAdmin.name,
         menu: options.menu,
@@ -75,7 +75,15 @@ export function useExcelDownload() {
       });
 
       const limitMsg = totalCount > MAX_ROWS ? ` (최대 ${MAX_ROWS.toLocaleString()}건 제한 적용)` : '';
-      showToast(`엑셀 파일이 다운로드되었습니다. (${totalDownloaded.toLocaleString()}건)${limitMsg}`, 'success');
+      if (logged) {
+        showToast(`엑셀 파일이 다운로드되었습니다. (${totalDownloaded.toLocaleString()}건)${limitMsg}`, 'success');
+      } else {
+        // 파일은 내려갔지만 감사 로그가 안 남았다 — 조용히 넘기면 '기록됐다'는 오해가 생긴다.
+        showToast(
+          `엑셀은 다운로드됐지만 다운로드 이력 기록에 실패했습니다. (${totalDownloaded.toLocaleString()}건)${limitMsg} 관리자에게 알려주세요.`,
+          'error',
+        );
+      }
     } catch {
       showToast('엑셀 다운로드에 실패했습니다. 다시 시도해주세요.', 'error');
     } finally {

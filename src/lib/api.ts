@@ -470,13 +470,41 @@ export async function setOrderMemo(orderId: string, memo: string): Promise<void>
 // 정산 — DB 는 주문 단위 행 → 판매자×기간 그룹으로 집계해 반환
 // ============================================================================
 
-export async function fetchSettlements(): Promise<Settlement[]> {
-  const { data, error } = await supabase
-    .from('admin_settlements').select('*').order('created_at', { ascending: false }).limit(2000);
-  throwIf(error);
+/** 정산 조회 상한 — 이 이상은 잘라내고 화면에 절단 사실을 알린다(조용한 부분 집계 방지). */
+const SETTLEMENT_MAX_ROWS = 20000;
+const SETTLEMENT_PAGE = 1000;
+
+export interface SettlementFetchResult {
+  groups: Settlement[];
+  /** 상한에 걸려 일부 행을 못 읽었는가 — true 면 그룹 합계가 실제보다 작을 수 있다. */
+  truncated: boolean;
+  /** 실제로 읽어들인 원본(주문 단위) 행 수 */
+  rowCount: number;
+}
+
+/**
+ * 정산 조회 — `admin_settlements`(주문 1건 = 1행)를 전량 페이징으로 읽어 판매자×기간으로 집계한다.
+ * 예전에는 `.limit(2000)` 한 번이라 정산행이 2000 을 넘는 순간 경계에 걸친 그룹이 '일부 행만'
+ * 집계돼 금액이 조용히 작게 표시되고, 그 그룹을 확정하면 settlementIds 에 없는 나머지 행이
+ * 영구히 정산예정으로 남는 사고가 났다.
+ */
+export async function fetchSettlements(): Promise<SettlementFetchResult> {
+  const rows: any[] = [];
+  let truncated = false;
+  for (let from = 0; ; from += SETTLEMENT_PAGE) {
+    if (from >= SETTLEMENT_MAX_ROWS) { truncated = true; break; }
+    const { data, error } = await supabase
+      .from('admin_settlements').select('*')
+      .order('created_at', { ascending: false })
+      .range(from, from + SETTLEMENT_PAGE - 1);
+    throwIf(error);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SETTLEMENT_PAGE) break;
+  }
 
   const groups = new Map<string, any[]>();
-  for (const row of data ?? []) {
+  for (const row of rows) {
     const key = `${row.seller_id}|${row.period_start ?? ''}|${row.period_end ?? ''}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
@@ -485,10 +513,10 @@ export async function fetchSettlements(): Promise<Settlement[]> {
   const num = (v: any) => Number(v) || 0;
 
   const result: Settlement[] = [];
-  for (const [key, rows] of groups) {
-    const first = rows[0];
-    const sum = (f: (r: any) => number) => rows.reduce((acc, r) => acc + (f(r) || 0), 0);
-    const statuses = new Set(rows.map(r => r.status));
+  for (const [key, groupRows] of groups) {
+    const first = groupRows[0];
+    const sum = (f: (r: any) => number) => groupRows.reduce((acc, r) => acc + (f(r) || 0), 0);
+    const statuses = new Set(groupRows.map(r => r.status));
     const status = statuses.has('on_hold') ? 'on_hold'
       : (statuses.size === 1 && statuses.has('completed')) ? 'completed' : 'scheduled';
 
@@ -500,20 +528,20 @@ export async function fetchSettlements(): Promise<Settlement[]> {
 
     result.push({
       id: key,
-      settlementIds: rows.map(r => r.id),
+      settlementIds: groupRows.map(r => r.id),
       sellerName: first.store_name ?? '',
       sellerId: first.seller_id,
       storeId: first.store_id,
       bizNumber: first.biz_number ?? '',
       period: first.period_start && first.period_end ? `${first.period_start} ~ ${first.period_end}` : '-',
-      orderCount: rows.length,
+      orderCount: groupRows.length,
       totalSales,
       platformFee,
       pgFee,
       commission: sum(r => num(r.fee)),
       refundAmount,
       couponBurden: sum(r => num(r.coupon_burden)),
-      // 본사 쿠폰 보전분·환불 회계(admin_refund_order 는 순매출을 차감)까지 반영한 잔차.
+      // 본사 쿠폰 보전분·환불 회계까지 반영한 잔차.
       // 상세 화면의 금액식(판매 - 수수료 - 환불 + 조정 = 최종)이 항상 맞아떨어지게 하는 용도.
       adjustment: finalAmount - (totalSales - platformFee - pgFee - refundAmount),
       finalAmount,
@@ -522,8 +550,9 @@ export async function fetchSettlements(): Promise<Settlement[]> {
       bankName: first.bank_name ?? '',
       accountNumber: first.account_number ?? '',
       accountHolder: first.account_holder ?? '',
-      memo: rows.find(r => r.admin_memo)?.admin_memo ?? '',
-      orders: rows.map(r => {
+      memo: groupRows.find(r => r.admin_memo)?.admin_memo ?? '',
+      mixed: statuses.size > 1,
+      orders: groupRows.map(r => {
         const amount = num(r.amount), pf = num(r.platform_fee), pg = num(r.pg_fee);
         const refund = num(r.refund), fin = num(r.settlement_amount);
         return {
@@ -541,38 +570,54 @@ export async function fetchSettlements(): Promise<Settlement[]> {
       }).sort((a, b) => a.settlementCode.localeCompare(b.settlementCode)),
     });
   }
-  return result;
+  return { groups: result, truncated, rowCount: rows.length };
 }
 
 /** 정산 상태 변경 결과. degraded=true 면 20260818 마이그레이션 미적용이라 구 시그니처로 처리된 것. */
 export interface SettlementStatusResult {
   count: number;
-  /** 구 3인자 RPC 로 폴백됨 — 정산예정일 지정과 판매자 알림이 적용되지 않았다. */
+  /** 구 시그니처 RPC 로 폴백됨 — 정산예정일 지정·판매자 알림·상태 가드가 적용되지 않았다. */
   degraded: boolean;
 }
 
 /**
  * 정산 상태 일괄 변경.
- * settledOn(정산예정일)은 20260818 마이그레이션에서 추가된 4번째 인자다. 마이그레이션 미적용 DB에서는
- * PostgREST 가 함수 시그니처를 못 찾아(PGRST202) 실패하므로, 그 경우에만 3인자 시그니처로 한 번 더 시도한다.
- * 폴백되면 정산예정일 지정·판매자 알림이 빠지므로 degraded=true 로 알려 화면이 경고를 띄우게 한다.
+ * - settledOn(정산예정일)은 20260818000000, fromStatus(원천 상태 가드)는 20260818010000 에서 추가됐다.
+ *   마이그레이션 미적용 DB 는 PostgREST 가 시그니처를 못 찾으므로(PGRST202) 단계적으로 낮춰 재시도한다.
+ * - fromStatus 를 넘기면 서버가 그 상태인 행만 바꾼다. 판매자×기간 그룹에 상태가 섞여 있어도
+ *   이미 지급 완료된 행의 정산예정일이 덮이거나 중복 알림이 나가지 않는다.
  */
 export async function setSettlementStatus(
-  settlementIds: string[], statusKo: Settlement['status'], memo?: string, settledOn?: string,
+  settlementIds: string[], statusKo: Settlement['status'], memo?: string,
+  settledOn?: string, fromStatusKo?: Settlement['status'],
 ): Promise<SettlementStatusResult> {
   const base = {
     p_ids: settlementIds, p_status: SETTLEMENT_STATUS_EN[statusKo], p_memo: memo ?? null,
   };
-  const { data, error } = await supabase.rpc('admin_set_settlement_status', {
-    ...base, p_settled_on: settledOn || null,
+  const withDate = { ...base, p_settled_on: settledOn || null };
+
+  const full = await supabase.rpc('admin_set_settlement_status', {
+    ...withDate, p_from_status: fromStatusKo ? SETTLEMENT_STATUS_EN[fromStatusKo] : null,
   });
-  if (error && isMissingRpcSignature(error)) {
-    const retry = await supabase.rpc('admin_set_settlement_status', base);
-    throwIf(retry.error);
-    return { count: retry.data ?? 0, degraded: true };
-  }
+  if (!full.error) return { count: full.data ?? 0, degraded: false };
+  if (!isMissingRpcSignature(full.error)) throwIf(full.error);
+
+  const dated = await supabase.rpc('admin_set_settlement_status', withDate);
+  if (!dated.error) return { count: dated.data ?? 0, degraded: true };
+  if (!isMissingRpcSignature(dated.error)) throwIf(dated.error);
+
+  const legacy = await supabase.rpc('admin_set_settlement_status', base);
+  throwIf(legacy.error);
+  return { count: legacy.data ?? 0, degraded: true };
+}
+
+/** 잘못 생성된 정산 행 삭제(정정용). 지급 완료 건은 서버가 제외한다. 사유 필수. */
+export async function deleteSettlements(settlementIds: string[], reason: string): Promise<number> {
+  const { data, error } = await supabase.rpc('admin_delete_settlements', {
+    p_ids: settlementIds, p_reason: reason,
+  });
   throwIf(error);
-  return { count: data ?? 0, degraded: false };
+  return data ?? 0;
 }
 
 /** 정산 관리자 메모만 갱신 — 상태 변경/판매자 알림 없이 memo 만 기록한다. */

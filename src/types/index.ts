@@ -162,6 +162,9 @@ export interface Settlement {
   accountNumber: string;
   accountHolder: string;
   memo?: string;
+  /** 그룹 안에 서로 다른 상태의 행이 섞여 있는가(임시 마감 후 배치가 같은 기간에 행을 추가한 경우 등).
+   *  섞이면 그룹 상태 뱃지 하나로는 실제를 표현할 수 없으므로 화면이 경고하고, 상태 변경은 해당 상태 행만 대상으로 한다. */
+  mixed: boolean;
   orders: SettlementOrderRow[]; // 정산 상세 — 주문 단위 내역
 }
 

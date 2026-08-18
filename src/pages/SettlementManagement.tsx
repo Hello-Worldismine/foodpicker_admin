@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, CheckCircle, Pause, RotateCcw, CalendarPlus, StickyNote, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, CheckCircle, Pause, RotateCcw, CalendarPlus, StickyNote, ChevronDown, ChevronRight, AlertTriangle, Trash2 } from 'lucide-react';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import Pagination from '../components/ui/Pagination';
@@ -7,7 +7,7 @@ import EmptyState from '../components/ui/EmptyState';
 import ExcelDownloadButton from '../components/ui/ExcelDownloadButton';
 import Toast from '../components/ui/Toast';
 import { useExcelDownload } from '../hooks/useExcelDownload';
-import { fetchSettlements, setSettlementStatus, setSettlementMemo, generateSettlements } from '../lib/api';
+import { fetchSettlements, setSettlementStatus, setSettlementMemo, generateSettlements, deleteSettlements } from '../lib/api';
 import type { Settlement, SettlementStatus } from '../types';
 
 const PAGE_SIZE = 6;
@@ -88,6 +88,13 @@ export default function SettlementManagement() {
   const [memoTarget, setMemoTarget] = useState<Settlement | null>(null);
   const [memoText, setMemoText] = useState('');
 
+  // 조회 절단(상한 초과) 여부 — 그룹 합계가 실제보다 작을 수 있으므로 화면에 반드시 알린다.
+  const [truncated, setTruncated] = useState(false);
+
+  // 정산 행 삭제(정정용) 모달
+  const [deleteTarget, setDeleteTarget] = useState<Settlement | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+
   // 정산 생성 모달
   const [genModal, setGenModal] = useState(false);
   const [genRange, setGenRange] = useState(lastWeekRange);
@@ -104,15 +111,16 @@ export default function SettlementManagement() {
   }, []);
 
   const load = useCallback(async () => {
-    const rows = await fetchSettlements();
-    setSettlements(rows);
-    return rows;
+    const res = await fetchSettlements();
+    setSettlements(res.groups);
+    setTruncated(res.truncated);
+    return res;
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     fetchSettlements()
-      .then(rows => { if (!cancelled) setSettlements(rows); })
+      .then(res => { if (!cancelled) { setSettlements(res.groups); setTruncated(res.truncated); } })
       .catch(e => { if (!cancelled) setLoadError((e as Error).message ?? '데이터를 불러오지 못했습니다.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -158,18 +166,27 @@ export default function SettlementManagement() {
     });
   };
 
-  /** 상태 변경 실행 — 서버 반영 후 목록을 다시 읽어 로컬/서버 값 불일치를 없앤다. */
+  /**
+   * 상태 변경 실행.
+   * - 그룹이 아니라 **행 단위**로 대상을 고른다. 판매자×기간 그룹에 상태가 섞여 있을 때
+   *   (임시 마감 후 배치가 같은 기간에 행을 추가하는 등) 이미 지급 완료된 행까지 덮어써
+   *   정산예정일이 바뀌고 중복 금액 알림이 나가던 문제를 막는다.
+   * - fromStatus 를 서버에도 넘겨(RPC 가드) 클라이언트 필터가 뚫려도 안전하게 한다.
+   * - 서버 반영 후 목록을 다시 읽어 로컬/서버 값 불일치를 없앤다.
+   */
   const applyStatus = async (
-    targets: Settlement[], status: SettlementStatus, memo?: string, settledOn?: string,
+    targets: Settlement[], status: SettlementStatus, fromStatus: SettlementStatus,
+    memo?: string, settledOn?: string,
   ): Promise<boolean> => {
-    const ids = targets.flatMap(t => t.settlementIds);
+    const ids = targets.flatMap(t => t.orders.filter(o => o.status === fromStatus).map(o => o.id));
+    const skipped = targets.reduce((n, t) => n + t.orders.length, 0) - ids.length;
     if (ids.length === 0) {
-      showNotice('대상 정산 건이 없습니다.', 'error');
+      showNotice(`"${fromStatus}" 상태인 정산 건이 없습니다.`, 'error');
       return false;
     }
     setBusy(true);
     try {
-      const { count, degraded } = await setSettlementStatus(ids, status, memo, settledOn);
+      const { count, degraded } = await setSettlementStatus(ids, status, memo, settledOn, fromStatus);
       await load();
       setChecked(new Set());
       if (degraded) {
@@ -181,7 +198,9 @@ export default function SettlementManagement() {
         );
       } else {
         showNotice(
-          `${targets.length}개 정산 그룹(${count || ids.length}건)을 "${status}" 처리했습니다. 판매자 알림·감사 로그가 기록되었습니다.`,
+          `${targets.length}개 정산 그룹(${count || ids.length}건)을 "${status}" 처리했습니다.`
+          + (skipped > 0 ? ` 상태가 달라 ${skipped}건은 제외했습니다.` : '')
+          + ' 판매자 알림·감사 로그가 기록되었습니다.',
           'success',
         );
       }
@@ -211,7 +230,7 @@ export default function SettlementManagement() {
   const handleConfirm = async () => {
     if (!confirmTargets) return;
     if (!payDate) return showNotice('정산예정일을 선택하세요.', 'error');
-    const ok = await applyStatus(confirmTargets, '정산완료', undefined, payDate);
+    const ok = await applyStatus(confirmTargets, '정산완료', '정산예정', undefined, payDate);
     if (ok) setConfirmTargets(null);
   };
 
@@ -222,19 +241,19 @@ export default function SettlementManagement() {
 
   const handleUnconfirm = async () => {
     if (!unconfirmTargets) return;
-    const ok = await applyStatus(unconfirmTargets, '정산예정');
+    const ok = await applyStatus(unconfirmTargets, '정산예정', '정산완료');
     if (ok) setUnconfirmTargets(null);
   };
 
   const handleRelease = async (targets: Settlement[]) => {
-    await applyStatus(targets, '정산예정');
+    await applyStatus(targets, '정산예정', '보류');
   };
 
   const handleHold = async () => {
     if (!holdTargets) return;
     const reason = holdReason === '직접 입력' ? holdCustom.trim() : holdReason;
     if (!reason) return showNotice('보류 사유를 선택하거나 입력하세요.', 'error');
-    const ok = await applyStatus(holdTargets, '보류', reason);
+    const ok = await applyStatus(holdTargets, '보류', '정산예정', reason);
     if (ok) { setHoldTargets(null); setHoldReason(''); setHoldCustom(''); }
   };
 
@@ -249,6 +268,28 @@ export default function SettlementManagement() {
       showNotice('관리자 메모를 저장했습니다.', 'success');
     } catch (e) {
       showNotice('메모 저장 실패: ' + (e as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 잘못 생성된 정산 행 삭제 — 지급 완료 건은 서버가 제외한다. 삭제하면 해당 주문은 재생성 대상이 된다. */
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const reason = deleteReason.trim();
+    if (!reason) return showNotice('삭제 사유를 입력하세요.', 'error');
+    setBusy(true);
+    try {
+      const count = await deleteSettlements(deleteTarget.settlementIds, reason);
+      await load();
+      setDeleteTarget(null);
+      setDeleteReason('');
+      setSelectedId(null);
+      showNotice(count > 0
+        ? `정산 ${count}건을 삭제했습니다. 해당 주문은 '정산 생성'으로 다시 만들 수 있습니다.`
+        : '삭제된 건이 없습니다. (지급 완료된 정산은 삭제할 수 없습니다)', count > 0 ? 'success' : 'error');
+    } catch (e) {
+      showNotice('삭제 실패: ' + (e as Error).message, 'error');
     } finally {
       setBusy(false);
     }
@@ -352,6 +393,18 @@ export default function SettlementManagement() {
         ))}
       </div>
 
+      {/* 조회 절단 경고 — 그룹 합계가 실제보다 작게 나올 수 있으므로 반드시 알린다. */}
+      {truncated && (
+        <div className="card p-3 flex items-start gap-2 border-alert-red/30 bg-red-50">
+          <AlertTriangle size={16} className="text-alert-red flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-charcoal">
+            정산 행이 조회 상한(20,000건)을 넘어 <b>일부만 불러왔습니다.</b> 경계에 걸친 판매자·기간 그룹은
+            금액과 건수가 실제보다 작게 표시될 수 있으니, 이 상태에서 확정·보류 처리하지 마세요.
+            (정산 기간 필터로 범위를 좁혀 조회하세요.)
+          </p>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="card p-4">
         <div className="flex flex-wrap gap-3 items-center">
@@ -400,7 +453,7 @@ export default function SettlementManagement() {
           <button disabled={busy} onClick={() => openConfirm(checkedRows.filter(s => s.status === '정산예정'))} className="btn-primary text-xs flex items-center gap-1">
             <CheckCircle size={13} /> 일괄 확정
           </button>
-          <button disabled={busy} onClick={() => { setHoldReason(''); setHoldCustom(''); setHoldTargets(checkedRows.filter(s => s.status !== '보류')); }} className="btn-warning text-xs flex items-center gap-1">
+          <button disabled={busy} onClick={() => { setHoldReason(''); setHoldCustom(''); setHoldTargets(checkedRows.filter(s => s.status === '정산예정')); }} className="btn-warning text-xs flex items-center gap-1">
             <Pause size={13} /> 일괄 보류
           </button>
           <button disabled={busy} onClick={() => handleRelease(checkedRows.filter(s => s.status === '보류'))} className="btn-secondary text-xs flex items-center gap-1">
@@ -447,7 +500,17 @@ export default function SettlementManagement() {
                     <td className="px-4 py-3 text-warm-orange">{won(s.commission)}</td>
                     <td className="px-4 py-3 text-alert-red">{won(s.refundAmount)}</td>
                     <td className="px-4 py-3 font-semibold text-primary">{won(s.finalAmount)}</td>
-                    <td className="px-4 py-3"><Badge type="settlement">{s.status}</Badge></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <Badge type="settlement">{s.status}</Badge>
+                        {s.mixed && (
+                          <span title="이 그룹에 상태가 다른 행이 섞여 있습니다. 상태 변경은 해당 상태 행에만 적용됩니다."
+                                className="inline-flex items-center text-warm-orange">
+                            <AlertTriangle size={12} />
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{s.scheduledDate || '-'}</td>
                     <td className="px-4 py-3">
                       {s.status === '정산예정' && (
@@ -516,6 +579,16 @@ export default function SettlementManagement() {
                   <button disabled={busy} onClick={() => openUnconfirm([selected])} className="btn-secondary text-xs flex items-center justify-center gap-1 px-3 whitespace-nowrap">
                     <RotateCcw size={13} /> 확정 취소
                   </button>
+                </div>
+              )}
+
+              {selected.mixed && (
+                <div className="flex items-start gap-2 bg-orange-50 rounded-lg p-3">
+                  <AlertTriangle size={14} className="text-warm-orange flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-charcoal">
+                    이 그룹에 <b>상태가 다른 정산 행이 섞여 있습니다.</b> 아래 '주문별 상세'에서 행별 상태를 확인하세요.
+                    상태 변경은 해당 상태인 행에만 적용되며, 이미 지급 완료된 행은 건드리지 않습니다.
+                  </p>
                 </div>
               )}
 
@@ -614,6 +687,20 @@ export default function SettlementManagement() {
                   : <p className="text-xs text-gray-400">등록된 메모가 없습니다.</p>}
                 <p className="text-[11px] text-gray-400 mt-2">※ 메모는 판매자 앱 정산 화면에도 노출됩니다(보류 사유 통지 겸용).</p>
               </section>
+
+              {selected.status !== '정산완료' && (
+                <section className="pt-1 border-t border-gray-100">
+                  <button
+                    onClick={() => { setDeleteReason(''); setDeleteTarget(selected); }}
+                    className="w-full text-xs text-alert-red hover:bg-red-50 rounded-lg py-2 flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <Trash2 size={12} /> 정산 행 삭제(정정용)
+                  </button>
+                  <p className="text-[11px] text-gray-400 mt-1 text-center">
+                    잘못 생성된 정산을 지우고 다시 만들 때만 사용하세요. 지급 완료 건은 삭제되지 않습니다.
+                  </p>
+                </section>
+              )}
             </div>
           </div>
         )}
@@ -696,6 +783,33 @@ export default function SettlementManagement() {
           <div className="flex gap-2">
             <button onClick={() => setMemoTarget(null)} className="btn-secondary flex-1">취소</button>
             <button disabled={busy} onClick={handleSaveMemo} className="btn-primary flex-1">저장</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 정산 행 삭제 모달 */}
+      <Modal open={!!deleteTarget} onClose={() => { setDeleteTarget(null); setDeleteReason(''); }} title="정산 행 삭제">
+        <div className="space-y-4">
+          <p className="text-sm text-charcoal">
+            <b>{deleteTarget?.sellerName}</b> · {deleteTarget?.period} 의 정산 행
+            {' '}{deleteTarget?.orders.filter(o => o.status !== '정산완료').length ?? 0}건을 삭제합니다.
+          </p>
+          <p className="text-xs text-gray-500 bg-red-50 rounded-lg p-3 leading-relaxed">
+            <b>지급 완료(정산완료) 건은 삭제되지 않습니다</b> — 회계 기록을 지우지 않기 위해 서버가 제외합니다.<br />
+            삭제한 주문은 멱등 가드에서 풀려 <b>'정산 생성'으로 다시 만들 수 있습니다.</b> 사유는 감사 로그에 남습니다.
+          </p>
+          <div>
+            <label className="text-sm font-medium text-charcoal block mb-1">삭제 사유 (필수)</label>
+            <textarea
+              className="input h-20 resize-none"
+              placeholder="예: 기간을 잘못 지정해 생성됨 — 08/10~08/16 으로 재생성 예정"
+              value={deleteReason}
+              onChange={e => setDeleteReason(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setDeleteTarget(null); setDeleteReason(''); }} className="btn-secondary flex-1">취소</button>
+            <button disabled={busy} onClick={handleDelete} className="btn-danger flex-1">삭제</button>
           </div>
         </div>
       </Modal>
